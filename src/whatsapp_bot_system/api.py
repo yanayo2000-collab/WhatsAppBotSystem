@@ -1040,6 +1040,12 @@ def _render_dashboard_html() -> str:
           </div>
         </div>
       </div>
+      <div id="scheduler-toast" class="item" style="display:none;margin-top:12px;border-color:#bbf7d0;background:#f0fdf4;color:#166534;">保存成功</div>
+      <div id="scheduler-preview-card" class="item" style="margin-top:12px;background:#fff7ed;border-color:#fed7aa;">
+        <div style="font-weight:600;margin-bottom:8px;">候选文案预览</div>
+        <div class="muted" id="scheduler-preview-meta">角色 / 场景 / 内容模式</div>
+        <div id="scheduler-preview-copy" style="margin-top:10px;line-height:1.7;">预估文案</div>
+      </div>
       <div class="actions" style="margin:12px 0 0;">
         <button class="secondary" id="scheduler-config-advanced-toggle">显示高级模式（JSON）</button>
       </div>
@@ -1149,6 +1155,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-cooldown-seconds').value = firstBot.cooldown_seconds ?? 0;
       document.getElementById('scheduler-form-cooldown-minutes-hint').textContent = `约 ${((Number(firstBot.cooldown_seconds ?? 0)) / 60).toFixed(1)} 分钟`;
       document.getElementById('scheduler-form-pending-threshold').value = candidateContext.pending_new_members ?? 0;
+      renderSchedulerPreviewCard();
     }
 
     function formatHourToTimeInput(hour) {
@@ -1203,6 +1210,7 @@ def _render_dashboard_html() -> str:
       runtimeIngest.runtime_input = runtimeIngest.runtime_input || {};
       runtimeIngest.runtime_input.pending_new_members = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
       document.getElementById('runtime-ingest-input').value = JSON.stringify(runtimeIngest, null, 2);
+      renderSchedulerPreviewCard();
     }
 
     updateStructuredSchedulerForm();
@@ -1279,6 +1287,35 @@ def _render_dashboard_html() -> str:
         ai_generate: 'AI 生成',
       };
       return labels[mode] || mode || '-';
+    }
+
+    function renderSchedulerPreviewCard() {
+      const groupName = document.getElementById('scheduler-form-group-name').value.trim() || '当前群组';
+      const role = document.getElementById('scheduler-form-bot-role').value;
+      const scenario = document.getElementById('scheduler-form-scenario-id').value;
+      const contentMode = document.getElementById('scheduler-form-content-mode').value;
+      const botName = document.getElementById('scheduler-form-bot-display-name').value.trim() || '机器人';
+      const rulesSummary = document.getElementById('scheduler-form-rules-summary').value.trim() || '请先查看群公告。';
+      const pendingThreshold = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
+      const meta = `角色：${formatRoleLabel(role)} · 场景：${formatScenarioLabel(scenario)} · 内容模式：${formatContentModeLabel(contentMode)}`;
+      let copy = `${groupName}的朋友们好，我是${botName}，${rulesSummary}`;
+      if (scenario === 'welcome') {
+        copy = `欢迎加入${groupName}，我是${botName}。${rulesSummary}${pendingThreshold > 0 ? ` 当前有 ${pendingThreshold} 位新成员待欢迎。` : ''}`;
+      } else if (scenario === 'cold_start') {
+        copy = `${groupName}今天有点安静，我是${botName}，来抛个轻松话题，看看大家最近最关心什么？`;
+      } else if (scenario === 'event_preheat') {
+        copy = `${groupName}的活动快开始了，我是${botName}，先帮大家热热场，等会儿记得看群公告安排。`;
+      } else if (scenario === 'manual_review') {
+        copy = `这是给${groupName}准备的人工审核候选文案：我是${botName}，先提醒大家${rulesSummary}`;
+      }
+      document.getElementById('scheduler-preview-meta').textContent = meta;
+      document.getElementById('scheduler-preview-copy').textContent = copy;
+    }
+
+    function showSchedulerToast(message) {
+      const toast = document.getElementById('scheduler-toast');
+      toast.textContent = message;
+      toast.style.display = 'block';
     }
 
     function formatSenderLabel(sender) {
@@ -1445,6 +1482,7 @@ def _render_dashboard_html() -> str:
       };
       const data = await requestJson('/v1/scheduler/configs', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      showSchedulerToast(`保存成功：${payload.group_id}`);
       document.getElementById('scheduler-group-id').value = payload.group_id;
       await loadDashboard();
     }
@@ -1461,6 +1499,7 @@ def _render_dashboard_html() -> str:
       };
       const data = await requestJson(`/v1/scheduler/configs/${groupId}`, { method: 'PUT', body: JSON.stringify(payload) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      showSchedulerToast(`保存成功：${groupId}`);
       document.getElementById('scheduler-group-id').value = groupId;
       await loadDashboard();
     }
