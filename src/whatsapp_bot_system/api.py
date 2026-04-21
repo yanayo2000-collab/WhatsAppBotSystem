@@ -1021,11 +1021,22 @@ def _render_dashboard_html() -> str:
               <option value="ai_generate">AI 生成</option>
             </select>
             <label style="display:block;margin-top:12px;">活跃时段</label>
-            <input id="scheduler-form-active-hours" placeholder="例如 8,9,10,11,12" />
+            <div class="actions">
+              <div style="flex:1;min-width:0;">
+                <label class="muted" style="display:block;margin-bottom:6px;">开始时间</label>
+                <input id="scheduler-form-active-start" type="time" value="08:00" />
+              </div>
+              <div style="flex:1;min-width:0;">
+                <label class="muted" style="display:block;margin-bottom:6px;">结束时间</label>
+                <input id="scheduler-form-active-end" type="time" value="22:00" />
+              </div>
+            </div>
             <label style="display:block;margin-top:12px;">冷却时间（秒）</label>
             <input id="scheduler-form-cooldown-seconds" type="number" min="0" />
+            <div id="scheduler-form-cooldown-minutes-hint" class="muted" style="margin-top:6px;">约 10.0 分钟</div>
             <label style="display:block;margin-top:12px;">新成员阈值</label>
             <input id="scheduler-form-pending-threshold" type="number" min="0" />
+            <div id="scheduler-form-pending-threshold-hint" class="muted" style="margin-top:6px;">达到该人数时，优先触发欢迎场景</div>
           </div>
         </div>
       </div>
@@ -1133,16 +1144,29 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-bot-role').value = firstBot.role || 'welcomer';
       document.getElementById('scheduler-form-scenario-id').value = firstScenario.id || 'welcome';
       document.getElementById('scheduler-form-content-mode').value = firstScenario.content_mode || (Array.isArray(firstBot.content_modes) && firstBot.content_modes[0]) || 'template_rewrite';
-      document.getElementById('scheduler-form-active-hours').value = Array.isArray(firstBot.active_hours) ? firstBot.active_hours.join(',') : '';
+      document.getElementById('scheduler-form-active-start').value = formatHourToTimeInput(Array.isArray(firstBot.active_hours) ? firstBot.active_hours[0] : 8);
+      document.getElementById('scheduler-form-active-end').value = formatHourToTimeInput(Array.isArray(firstBot.active_hours) && firstBot.active_hours.length ? (firstBot.active_hours[firstBot.active_hours.length - 1] + 1) % 24 : 22);
       document.getElementById('scheduler-form-cooldown-seconds').value = firstBot.cooldown_seconds ?? 0;
+      document.getElementById('scheduler-form-cooldown-minutes-hint').textContent = `约 ${((Number(firstBot.cooldown_seconds ?? 0)) / 60).toFixed(1)} 分钟`;
       document.getElementById('scheduler-form-pending-threshold').value = candidateContext.pending_new_members ?? 0;
     }
 
-    function parseActiveHoursInput(value) {
-      return String(value || '')
-        .split(',')
-        .map((item) => Number(item.trim()))
-        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 23);
+    function formatHourToTimeInput(hour) {
+      const safeHour = Math.max(0, Math.min(23, Number.isFinite(Number(hour)) ? Number(hour) : 0));
+      return `${String(safeHour).padStart(2, '0')}:00`;
+    }
+
+    function buildActiveHoursFromRange(startValue, endValue) {
+      const startHour = Number(String(startValue || '08:00').split(':')[0]);
+      const endHour = Number(String(endValue || '22:00').split(':')[0]);
+      const hours = [];
+      let current = startHour;
+      while (current !== endHour) {
+        hours.push(current);
+        current = (current + 1) % 24;
+        if (hours.length > 24) break;
+      }
+      return hours;
     }
 
     function syncSchedulerJsonFromStructuredForm() {
@@ -1162,8 +1186,12 @@ def _render_dashboard_html() -> str:
       config.bots[0].display_name = document.getElementById('scheduler-form-bot-display-name').value.trim();
       config.bots[0].role = document.getElementById('scheduler-form-bot-role').value.trim();
       config.bots[0].content_modes = [document.getElementById('scheduler-form-content-mode').value];
-      config.bots[0].active_hours = parseActiveHoursInput(document.getElementById('scheduler-form-active-hours').value);
+      config.bots[0].active_hours = buildActiveHoursFromRange(
+        document.getElementById('scheduler-form-active-start').value,
+        document.getElementById('scheduler-form-active-end').value,
+      );
       config.bots[0].cooldown_seconds = Number(document.getElementById('scheduler-form-cooldown-seconds').value || 0);
+      document.getElementById('scheduler-form-cooldown-minutes-hint').textContent = `约 ${(config.bots[0].cooldown_seconds / 60).toFixed(1)} 分钟`;
       config.scenarios[0].id = document.getElementById('scheduler-form-scenario-id').value.trim();
       config.scenarios[0].bot_roles = [document.getElementById('scheduler-form-bot-role').value.trim()];
       config.scenarios[0].content_mode = document.getElementById('scheduler-form-content-mode').value;
@@ -1493,7 +1521,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('scheduler-config-advanced-toggle').addEventListener('click', () => toggleSchedulerAdvancedMode());
-    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode', 'scheduler-form-active-hours', 'scheduler-form-cooldown-seconds', 'scheduler-form-pending-threshold'].forEach((id) => {
+    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode', 'scheduler-form-active-start', 'scheduler-form-active-end', 'scheduler-form-cooldown-seconds', 'scheduler-form-pending-threshold'].forEach((id) => {
       document.getElementById(id).addEventListener('input', () => {
         try { syncSchedulerJsonFromStructuredForm(); } catch (_) {}
       });

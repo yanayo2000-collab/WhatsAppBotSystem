@@ -40,9 +40,12 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'id="scheduler-form-bot-role"' in html
     assert 'id="scheduler-form-scenario-id"' in html
     assert 'id="scheduler-form-content-mode"' in html
-    assert 'id="scheduler-form-active-hours"' in html
+    assert 'id="scheduler-form-active-start"' in html
+    assert 'id="scheduler-form-active-end"' in html
     assert 'id="scheduler-form-cooldown-seconds"' in html
+    assert 'id="scheduler-form-cooldown-minutes-hint"' in html
     assert 'id="scheduler-form-pending-threshold"' in html
+    assert 'id="scheduler-form-pending-threshold-hint"' in html
     assert 'id="scheduler-config-advanced-toggle"' in html
     assert 'id="scheduler-config-advanced-panel"' in html
     assert 'toggleSchedulerAdvancedMode' in html
@@ -74,5 +77,9 @@ def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
     assert '新人欢迎' in html
     assert '模板改写' in html
     assert '活跃时段' in html
+    assert '开始时间' in html
+    assert '结束时间' in html
     assert '冷却时间（秒）' in html
+    assert '约 10.0 分钟' in html
     assert '新成员阈值' in html
+    assert '达到该人数时，优先触发欢迎场景' in html
