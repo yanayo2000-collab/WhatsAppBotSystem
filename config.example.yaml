@@ -1,46 +1,30 @@
-whatsapp:
-  enabled: true
-  multi_bot:
-    enabled: true
-    group_id: 120363001234567890@g.us
-    bots:
-      - id: bot-welcome
-        display_name: Luna
-        role: welcomer
-        active_hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
-        cooldown_seconds: 600
-        content_modes: [template_rewrite, fixed]
-      - id: bot-icebreaker
-        display_name: Mia
-        role: icebreaker
-        active_hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-        cooldown_seconds: 900
-        content_modes: [ai_assisted, template_rewrite]
-    frequency:
-      group_min_interval_seconds: 180
-      human_grace_period_seconds: 180
-      max_group_messages_per_hour: 6
-      max_bot_messages_per_hour: 3
-    scenarios:
-      - id: manual_review
-        trigger: manual_review
-        priority: 120
-        bot_roles: [welcomer, icebreaker]
-        content_mode: template_rewrite
-      - id: welcome
-        trigger: new_member
-        priority: 100
-        bot_roles: [welcomer]
-        content_mode: template_rewrite
-      - id: event_preheat
-        trigger: event_preheat
-        priority: 80
-        preheat_window_minutes: 30
-        bot_roles: [icebreaker, welcomer]
-        content_mode: fixed
-      - id: cold_start
-        trigger: idle
-        priority: 50
-        idle_seconds: 600
-        bot_roles: [icebreaker]
-        content_mode: ai_assisted
+database:
+  review_db_path: data/review_flow.db
+  execution_db_path: data/execution_attempts.db
+
+execution:
+  default_sender: mock # mock | dry_run | webhook
+  webhook_sender:
+    endpoint: ""
+    timeout_seconds: 10
+    secret: ""
+
+api:
+  host: 127.0.0.1
+  port: 8787
+
+templates:
+  personas:
+    bot-welcome:
+      display_name: Luna
+      tone: warm
+      style_hint: friendly and encouraging
+    bot-icebreaker:
+      display_name: Mia
+      tone: playful
+      style_hint: light and chatty
+  scenarios:
+    welcome:
+      template: "Hi {{group_name}} friends, I'm {{bot_name}}. {{rules_summary}}"
+    cold_start:
+      template: "Hey everyone, I'm {{bot_name}} — what do you think about {{topic_hint}}?"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -50,6 +52,41 @@ class DryRunSender(BaseSender):
 
     def send(self, *, candidate_id: str, text: str, context: dict) -> str:
         return f'dryrun-msg-{uuid4().hex[:8]}'
+
+
+@dataclass
+class WebhookSender(BaseSender):
+    endpoint: str
+    timeout_seconds: float = 10.0
+    secret: str = ''
+
+    def __init__(self, endpoint: str, timeout_seconds: float = 10.0, secret: str = ''):
+        super().__init__(sender_type='webhook')
+        self.endpoint = endpoint
+        self.timeout_seconds = timeout_seconds
+        self.secret = secret
+
+    def send(self, *, candidate_id: str, text: str, context: dict) -> str:
+        payload = {
+            'candidate_id': candidate_id,
+            'text': text,
+            'context': context,
+        }
+        headers = {'Content-Type': 'application/json'}
+        if self.secret:
+            headers['X-Webhook-Secret'] = self.secret
+        req = urllib.request.Request(
+            self.endpoint,
+            data=json.dumps(payload).encode('utf-8'),
+            headers=headers,
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+            body = json.loads(resp.read().decode('utf-8') or '{}')
+        outbound_message_id = str(body.get('outbound_message_id') or '').strip()
+        if not outbound_message_id:
+            raise RuntimeError('Webhook sender response missing outbound_message_id')
+        return outbound_message_id
 
 
 @dataclass

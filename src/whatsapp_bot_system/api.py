@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
 from whatsapp_bot_system.execution_store_sqlite import SQLiteExecutionAttemptStore
-from whatsapp_bot_system.executor import DryRunSender, MockSender, SendExecutionService, SenderRegistry
+from whatsapp_bot_system.executor import DryRunSender, MockSender, SendExecutionService, SenderRegistry, WebhookSender
 from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
 from whatsapp_bot_system.review_flow import ReviewFlowService
 from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
@@ -65,7 +65,7 @@ class MarkFailedRequest(BaseModel):
 
 
 class RenderTemplateRequest(BaseModel):
-    catalog: dict
+    catalog: dict | None = None
     bot_id: str
     scenario_id: str
     context: dict[str, Any] = Field(default_factory=dict)
@@ -79,9 +79,14 @@ def create_app(
     db_path: str | Path | None = None,
     execution_db_path: str | Path | None = None,
     default_sender: str = 'mock',
+    settings_templates: dict[str, Any] | None = None,
+    webhook_endpoint: str = '',
+    webhook_timeout_seconds: float = 10.0,
+    webhook_secret: str = '',
 ) -> FastAPI:
     resolved_db_path = ':memory:' if db_path is None else Path(db_path)
     resolved_execution_db_path = ':memory:' if execution_db_path is None else Path(execution_db_path)
+    resolved_templates = settings_templates or {'personas': {}, 'scenarios': {}}
     store = SQLiteCandidateMessageStore(resolved_db_path)
     attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
     review_service = ReviewFlowService(store)
@@ -90,6 +95,7 @@ def create_app(
         senders={
             'mock': MockSender(),
             'dry_run': DryRunSender(),
+            **({'webhook': WebhookSender(endpoint=webhook_endpoint, timeout_seconds=webhook_timeout_seconds, secret=webhook_secret)} if webhook_endpoint else {}),
         },
     )
     execution_service = SendExecutionService(review_service, sender_registry, attempt_store)
@@ -102,6 +108,7 @@ def create_app(
             'review_db_path': str(resolved_db_path),
             'execution_db_path': str(resolved_execution_db_path),
             'default_sender': default_sender,
+            'available_senders': sorted(sender_registry.senders.keys()),
         }
 
     @app.post('/v1/planner/dry-run')
@@ -139,7 +146,7 @@ def create_app(
 
     @app.post('/v1/templates/render')
     def render_template(request: RenderTemplateRequest) -> dict:
-        catalog = TemplateCatalog.from_dict(request.catalog)
+        catalog = TemplateCatalog.from_dict(request.catalog or resolved_templates)
         rendered = render_candidate_from_template(
             catalog=catalog,
             bot_id=request.bot_id,
