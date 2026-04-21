@@ -29,5 +29,33 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'loadGroupConfigIntoForm' in html
     assert 'applyGroupStatusFilters' in html
     assert 'updateExistingSchedulerConfig' in html
-    assert 'latest ingest at=${item.latest_runtime_ingest_at || \'-\'}' in html
-    assert 'latest failure=${item.latest_failure_reason || \'-\'}' in html
+    assert '最近采集时间=${item.latest_runtime_ingest_at || \'-\'}' in html
+    assert '最近失败原因=${item.latest_failure_reason || \'-\'}' in html
+    assert 'formatStatusLabel' in html
+    assert 'formatWorkflowLabel' in html
+    assert 'id="scheduler-form-group-name"' in html
+    assert 'id="scheduler-form-rules-summary"' in html
+    assert 'id="scheduler-form-provider"' in html
+    assert 'id="scheduler-form-bot-display-name"' in html
+    assert 'id="scheduler-form-scenario-id"' in html
+    assert 'syncSchedulerJsonFromStructuredForm' in html
+    assert 'updateStructuredSchedulerForm' in html
+
+
+def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
+    client = _client(tmp_path)
+
+    response = client.get('/')
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<title>WhatsApp 机器人系统后台</title>' in html
+    assert '<h1>WhatsApp 机器人系统后台</h1>' in html
+    assert '<h2>队列概览</h2>' in html
+    assert '<h2>群组状态总览</h2>' in html
+    assert '<h2>调度配置编辑</h2>' in html
+    assert 'formatSenderLabel' in html
+    assert 'formatSourceLabel' in html
+    assert '请先查看群公告。' in html
+    assert '桥接服务A' in html
+    assert '后台调度' in html

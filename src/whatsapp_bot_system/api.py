@@ -128,7 +128,7 @@ class RenderTemplateRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
-class SendCandidateRequest(BaseModel):
+class 发送CandidateRequest(BaseModel):
     sender: str | None = None
 
 
@@ -168,8 +168,8 @@ def create_app(
                 {
                     'webhook': WebhookSender(
                         endpoint=webhook_endpoint,
-                        timeout_seconds=webhook_timeout_seconds,
                         secret=webhook_secret,
+                        timeout_seconds=webhook_timeout_seconds,
                     )
                 }
                 if webhook_endpoint
@@ -594,7 +594,7 @@ def create_app(
         return _apply_transition(lambda: review_service.mark_failed(candidate_id, error=request.error))
 
     @app.post('/v1/execution/candidates/{candidate_id}/send')
-    def send_candidate(candidate_id: str, request: SendCandidateRequest | None = None) -> dict:
+    def send_candidate(candidate_id: str, request: 发送CandidateRequest | None = None) -> dict:
         sender_name = None if request is None else request.sender
         return _apply_transition(lambda: execution_service.send_candidate(candidate_id, sender_name=sender_name))
 
@@ -665,7 +665,7 @@ def _plan_candidate_execution(request: PlannerDryRunRequest):
     return (plan, candidate), audit
 
 
-def _apply_workflow(*, record_id: str, workflow: str, reviewer: str, submit_for_review: bool, review_service: ReviewFlowService, execution_service: SendExecutionService):
+def _apply_workflow(*, record_id: str, workflow: str, reviewer: str, submit_for_review: bool, review_service: ReviewFlowService, execution_service: 发送ExecutionService):
     record = review_service.get_candidate(record_id)
     if submit_for_review and record.status == 'generated':
         record = review_service.submit_for_review(record.id)
@@ -684,7 +684,7 @@ def _apply_workflow(*, record_id: str, workflow: str, reviewer: str, submit_for_
     raise HTTPException(status_code=400, detail=f'Unsupported workflow: {workflow}')
 
 
-def _execute_scheduler_latest(*, request: SchedulerExecuteLatestRequest, runtime_ingest_store: SQLiteRuntimeIngestStore, planner_audit_store: SQLitePlannerAuditStore, review_service: ReviewFlowService, execution_service: SendExecutionService, scheduler_run_store: SQLiteSchedulerRunStore) -> dict:
+def _execute_scheduler_latest(*, request: SchedulerExecuteLatestRequest, runtime_ingest_store: SQLiteRuntimeIngestStore, planner_audit_store: SQLitePlannerAuditStore, review_service: ReviewFlowService, execution_service: 发送ExecutionService, scheduler_run_store: SQLiteSchedulerRunStore) -> dict:
     try:
         ingest = runtime_ingest_store.latest(request.group_id)
     except KeyError as exc:
@@ -887,11 +887,11 @@ def _build_group_status_item(
 def _render_dashboard_html() -> str:
     return """
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WhatsApp Bot System Dashboard</title>
+  <title>WhatsApp 机器人系统后台</title>
   <style>
     :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     body { margin: 0; background: #f5f7fb; color: #1f2937; }
@@ -915,132 +915,153 @@ def _render_dashboard_html() -> str:
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>WhatsApp Bot System Dashboard</h1>
-      <p class="muted">MVP operations console for queue review, planner execution, and recent send attempts.</p>
+      <h1>WhatsApp 机器人系统后台</h1>
+      <p class="muted">用于队列审核、策略调度、运行查看与发送操作的 MVP 管理后台。</p>
       <div id="health" class="muted">Loading health…</div>
     </section>
 
     <section class="panel">
-      <h2>Queue Snapshot</h2>
+      <h2>队列概览</h2>
       <div id="queue-stats" class="grid"></div>
     </section>
 
     <section class="panel">
-      <h2>Planner Execute</h2>
-      <p class="muted">Paste config, runtime input, and candidate context JSON to generate a review candidate via <code>/v1/ops/planner/execute</code>.</p>
+      <h2>策略执行</h2>
+      <p class="muted">填写配置、运行态和候选上下文 JSON，通过 <code>/v1/ops/planner/execute</code> 生成候选消息。</p>
       <div class="row">
         <div>
-          <label>Planner Config JSON</label>
+          <label>策略配置 JSON</label>
           <textarea id="planner-config"></textarea>
-          <label style="display:block;margin-top:12px;">Runtime Input JSON</label>
+          <label style="display:block;margin-top:12px;">运行态输入 JSON</label>
           <textarea id="planner-runtime"></textarea>
         </div>
         <div>
-          <label>Candidate Context JSON</label>
+          <label>候选上下文 JSON</label>
           <textarea id="planner-context"></textarea>
-          <label style="display:block;margin-top:12px;">Workflow</label>
+          <label style="display:block;margin-top:12px;">工作流</label>
           <select id="planner-workflow" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-            <option value="queue">queue → pending_review</option>
-            <option value="approve">queue → approved</option>
-            <option value="send">queue → approved → send</option>
+            <option value="queue">入队 → 待审核</option>
+            <option value="approve">入队 → 已通过</option>
+            <option value="send">入队 → 已通过 → 发送</option>
           </select>
           <div class="actions">
-            <button id="planner-submit">Run Planner Workflow</button>
-            <button class="secondary" id="planner-refresh">Refresh Dashboard</button>
+            <button id="planner-submit">执行策略工作流</button>
+            <button class="secondary" id="planner-refresh">刷新后台</button>
           </div>
-          <pre id="planner-result" class="item muted">No execution yet.</pre>
+          <pre id="planner-result" class="item muted">暂无执行结果。</pre>
         </div>
       </div>
     </section>
 
     <div class="row">
       <section class="panel">
-        <h2>Pending / Recent Candidates</h2>
+        <h2>待审核 / 最近候选消息</h2>
         <div id="candidates"></div>
       </section>
       <section class="panel">
-        <h2>Recent Attempts</h2>
+        <h2>最近发送尝试</h2>
         <div id="attempts"></div>
       </section>
     </div>
 
     <section class="panel">
-      <h2>Recent Planner Audits</h2>
+      <h2>最近策略审计</h2>
       <div id="planner-audits"></div>
     </section>
 
     <section class="panel">
-      <h2>Group Status Overview</h2>
+      <h2>群组状态总览</h2>
       <div class="actions">
         <label style="display:flex;align-items:center;gap:8px;">
           <input id="group-status-filter-enabled" type="checkbox" />
-          <span class="muted">Enabled only</span>
+          <span class="muted">仅看启用中</span>
         </label>
         <select id="group-status-sort" style="width:auto;min-width:220px;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-          <option value="group_id_asc">Sort: Group ID</option>
-          <option value="latest_scheduler_run_desc">Sort: Latest run newest first</option>
-          <option value="latest_scheduler_run_asc">Sort: Latest run oldest first</option>
+          <option value="group_id_asc">排序：群组 ID</option>
+          <option value="latest_scheduler_run_desc">排序：最近运行（新到旧）</option>
+          <option value="latest_scheduler_run_asc">排序：最近运行（旧到新）</option>
         </select>
       </div>
       <div id="group-status-cards"></div>
     </section>
 
     <section class="panel" id="scheduler-config-editor">
-      <h2>Scheduler Config Editor</h2>
-      <div class="row">
-        <div>
-          <label>Group ID</label>
-          <input id="scheduler-config-group-id" />
-          <label style="display:block;margin-top:12px;">Enabled</label>
-          <select id="scheduler-config-enabled" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-            <option value="true">true</option>
-            <option value="false">false</option>
-          </select>
-          <label style="display:block;margin-top:12px;">Workflow</label>
-          <select id="scheduler-config-workflow" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-            <option value="queue">queue</option>
-            <option value="approve">approve</option>
-            <option value="send">send</option>
-          </select>
-          <label style="display:block;margin-top:12px;">Reviewer</label>
-          <input id="scheduler-config-reviewer" />
-        </div>
-        <div>
-          <label>Candidate Context JSON</label>
-          <textarea id="scheduler-config-candidate-context"></textarea>
-          <label style="display:block;margin-top:12px;">Bot Config JSON</label>
-          <textarea id="scheduler-config-bot-config"></textarea>
-          <div class="actions">
-            <button id="scheduler-config-save">Save Scheduler Config</button>
-            <button class="secondary" id="scheduler-config-update">Update Existing Config</button>
+      <h2>调度配置编辑</h2>
+      <div class="item" style="margin-bottom:16px;background:#f8fafc;">
+        <div style="font-weight:600;margin-bottom:10px;">中文辅助表单</div>
+        <div class="row">
+          <div>
+            <label>群名称</label>
+            <input id="scheduler-form-group-name" />
+            <label style="display:block;margin-top:12px;">群公告摘要</label>
+            <textarea id="scheduler-form-rules-summary"></textarea>
+            <label style="display:block;margin-top:12px;">采集提供方</label>
+            <input id="scheduler-form-provider" />
+          </div>
+          <div>
+            <label>机器人昵称</label>
+            <input id="scheduler-form-bot-display-name" />
+            <label style="display:block;margin-top:12px;">机器人角色</label>
+            <input id="scheduler-form-bot-role" />
+            <label style="display:block;margin-top:12px;">场景 ID</label>
+            <input id="scheduler-form-scenario-id" />
           </div>
         </div>
       </div>
-      <h3>Recent Scheduler Configs</h3>
+      <div class="row">
+        <div>
+          <label>群组 ID</label>
+          <input id="scheduler-config-group-id" />
+          <label style="display:block;margin-top:12px;">是否启用</label>
+          <select id="scheduler-config-enabled" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+            <option value="true">是</option>
+            <option value="false">否</option>
+          </select>
+          <label style="display:block;margin-top:12px;">工作流</label>
+          <select id="scheduler-config-workflow" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+            <option value="queue">入队</option>
+            <option value="approve">审核通过</option>
+            <option value="send">直接发送</option>
+          </select>
+          <label style="display:block;margin-top:12px;">审核人</label>
+          <input id="scheduler-config-reviewer" />
+        </div>
+        <div>
+          <label>候选上下文 JSON</label>
+          <textarea id="scheduler-config-candidate-context"></textarea>
+          <label style="display:block;margin-top:12px;">机器人配置 JSON</label>
+          <textarea id="scheduler-config-bot-config"></textarea>
+          <div class="actions">
+            <button id="scheduler-config-save">保存调度配置</button>
+            <button class="secondary" id="scheduler-config-update">更新现有配置</button>
+          </div>
+        </div>
+      </div>
+      <h3>最近调度配置</h3>
       <div id="scheduler-configs"></div>
     </section>
 
     <section class="panel">
-      <h2>Runtime Webhook / Scheduler</h2>
+      <h2>运行态 Webhook / 调度器</h2>
       <div class="row">
         <div>
-          <label>Runtime Ingest JSON</label>
+          <label>运行态采集 JSON</label>
           <textarea id="runtime-ingest-input"></textarea>
           <div class="actions">
-            <button id="runtime-ingest-submit">Ingest Runtime</button>
+            <button id="runtime-ingest-submit">写入运行态</button>
           </div>
         </div>
         <div>
-          <label>Scheduler Group ID</label>
+          <label>调度群组 ID</label>
           <input id="scheduler-group-id" />
           <div class="actions">
-            <button id="scheduler-run-latest">Run Latest Ingest</button>
-            <button class="secondary" id="scheduler-tick-run">Run Batch Tick</button>
+            <button id="scheduler-run-latest">执行最新采集</button>
+            <button class="secondary" id="scheduler-tick-run">执行批量 Tick</button>
           </div>
-          <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
-          <h3>Recent Runtime Ingests</h3>
+          <pre id="scheduler-result" class="item muted">暂无调度执行结果。</pre>
+          <h3>最近运行态采集</h3>
           <div id="runtime-ingests"></div>
-          <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
+          <h3 style="margin-top:16px;">最近调度运行</h3>
           <div id="scheduler-runs"></div>
         </div>
       </div>
@@ -1055,9 +1076,9 @@ def _render_dashboard_html() -> str:
       scenarios: [{ id: 'welcome', trigger: 'new_member', priority: 100, bot_roles: ['welcomer'], content_mode: 'template_rewrite' }]
     };
     const defaultRuntime = { group_id: '120363001234567890@g.us', now: '2026-04-21T12:00:00+00:00', pending_new_members: 1, messages: [] };
-    const defaultContext = { group_name: 'Moms Club', rules_summary: 'Please read the pinned guide.', pending_new_members: 1 };
-    const defaultRuntimeIngest = { source: 'webhook', group_id: '120363001234567890@g.us', runtime_input: defaultRuntime, metadata: { provider: 'bridge-a' } };
-    const defaultSchedulerConfig = { group_id: '120363001234567890@g.us', enabled: true, workflow: 'send', reviewer: 'dashboard-scheduler', candidate_context: defaultContext, config: defaultConfig };
+    const defaultContext = { group_name: '妈妈成长群', rules_summary: '请先查看群公告。', pending_new_members: 1 };
+    const defaultRuntimeIngest = { source: 'webhook', group_id: '120363001234567890@g.us', runtime_input: defaultRuntime, metadata: { provider: '桥接服务A' } };
+    const defaultSchedulerConfig = { group_id: '120363001234567890@g.us', enabled: true, workflow: 'send', reviewer: '后台调度', candidate_context: defaultContext, config: defaultConfig };
     document.getElementById('planner-config').value = JSON.stringify(defaultConfig, null, 2);
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
@@ -1070,6 +1091,51 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-bot-config').value = JSON.stringify(defaultSchedulerConfig.config, null, 2);
     document.getElementById('scheduler-group-id').value = '120363001234567890@g.us';
 
+    function updateStructuredSchedulerForm() {
+      let candidateContext = {};
+      let config = {};
+      try {
+        candidateContext = JSON.parse(document.getElementById('scheduler-config-candidate-context').value || '{}');
+      } catch (_) {}
+      try {
+        config = JSON.parse(document.getElementById('scheduler-config-bot-config').value || '{}');
+      } catch (_) {}
+      const firstBot = Array.isArray(config.bots) && config.bots.length ? config.bots[0] : {};
+      const firstScenario = Array.isArray(config.scenarios) && config.scenarios.length ? config.scenarios[0] : {};
+      document.getElementById('scheduler-form-group-name').value = candidateContext.group_name || '';
+      document.getElementById('scheduler-form-rules-summary').value = candidateContext.rules_summary || '';
+      document.getElementById('scheduler-form-provider').value = ((JSON.parse(document.getElementById('runtime-ingest-input').value || '{}').metadata) || {}).provider || '';
+      document.getElementById('scheduler-form-bot-display-name').value = firstBot.display_name || '';
+      document.getElementById('scheduler-form-bot-role').value = firstBot.role || '';
+      document.getElementById('scheduler-form-scenario-id').value = firstScenario.id || '';
+    }
+
+    function syncSchedulerJsonFromStructuredForm() {
+      const candidateContext = JSON.parse(document.getElementById('scheduler-config-candidate-context').value || '{}');
+      candidateContext.group_name = document.getElementById('scheduler-form-group-name').value.trim();
+      candidateContext.rules_summary = document.getElementById('scheduler-form-rules-summary').value.trim();
+      document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(candidateContext, null, 2);
+
+      const config = JSON.parse(document.getElementById('scheduler-config-bot-config').value || '{}');
+      if (!Array.isArray(config.bots) || !config.bots.length) {
+        config.bots = [{}];
+      }
+      if (!Array.isArray(config.scenarios) || !config.scenarios.length) {
+        config.scenarios = [{}];
+      }
+      config.bots[0].display_name = document.getElementById('scheduler-form-bot-display-name').value.trim();
+      config.bots[0].role = document.getElementById('scheduler-form-bot-role').value.trim();
+      config.scenarios[0].id = document.getElementById('scheduler-form-scenario-id').value.trim();
+      document.getElementById('scheduler-config-bot-config').value = JSON.stringify(config, null, 2);
+
+      const runtimeIngest = JSON.parse(document.getElementById('runtime-ingest-input').value || '{}');
+      runtimeIngest.metadata = runtimeIngest.metadata || {};
+      runtimeIngest.metadata.provider = document.getElementById('scheduler-form-provider').value.trim();
+      document.getElementById('runtime-ingest-input').value = JSON.stringify(runtimeIngest, null, 2);
+    }
+
+    updateStructuredSchedulerForm();
+
     async function requestJson(url, options) {
       const response = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
       if (!response.ok) {
@@ -1081,84 +1147,124 @@ def _render_dashboard_html() -> str:
 
     function renderQueue(queue) {
       const stats = [
-        ['Total', queue.total], ['Pending Review', queue.pending_review], ['Approved', queue.approved], ['Sent', queue.sent], ['Failed', queue.failed], ['Rejected', queue.rejected]
+        ['总数', queue.total], ['待审核', queue.pending_review], ['已通过', queue.approved], ['已发送', queue.sent], ['失败', queue.failed], ['已驳回', queue.rejected]
       ];
       document.getElementById('queue-stats').innerHTML = stats.map(([label, value]) => `<div class="stat"><span class="muted">${label}</span><strong>${value ?? 0}</strong></div>`).join('');
+    }
+
+    function formatStatusLabel(status) {
+      const labels = {
+        pending_review: '待审核',
+        approved: '已通过',
+        sent: '已发送',
+        failed: '失败',
+        rejected: '已驳回',
+        generated: '已生成',
+        no_match: '未命中',
+      };
+      return labels[status] || status || '-';
+    }
+
+    function formatWorkflowLabel(workflow) {
+      const labels = {
+        queue: '入队',
+        approve: '审核通过',
+        send: '直接发送',
+      };
+      return labels[workflow] || workflow || '-';
+    }
+
+    function formatSenderLabel(sender) {
+      const labels = {
+        mock: '模拟发送',
+        dry_run: '演练发送',
+        webhook: 'Webhook 发送',
+      };
+      return labels[sender] || sender || '-';
+    }
+
+    function formatSourceLabel(source) {
+      const labels = {
+        webhook: 'Webhook',
+        runtime_file: '运行态文件',
+        manual: '手动录入',
+      };
+      return labels[source] || source || '-';
     }
 
     function renderCandidates(items) {
       document.getElementById('candidates').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.status}</span> <strong>${item.bot_display_name}</strong> · ${item.scenario_id}</div>
+          <div><span class="label">${formatStatusLabel(item.status)}</span> <strong>${item.bot_display_name}</strong> · ${item.scenario_id}</div>
           <div class="muted" style="margin-top:8px;">${item.text}</div>
           <div class="actions">
-            ${item.status === 'pending_review' ? `<button onclick="approveCandidate('${item.id}')">Approve</button><button class="secondary" onclick="rejectCandidate('${item.id}')">Reject</button>` : ''}
-            ${item.status === 'approved' ? `<button onclick="sendCandidate('${item.id}')">Send</button>` : ''}
+            ${item.status === 'pending_review' ? `<button onclick="approveCandidate('${item.id}')">通过</button><button class="secondary" onclick="rejectCandidate('${item.id}')">驳回</button>` : ''}
+            ${item.status === 'approved' ? `<button onclick="sendCandidate('${item.id}')">发送</button>` : ''}
           </div>
-        </div>`).join('') : '<div class="muted">No candidates yet.</div>';
+        </div>`).join('') : '<div class="muted">暂无候选消息。</div>';
     }
 
     function renderAttempts(items) {
       document.getElementById('attempts').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.status}</span> ${item.sender_type}</div>
-          <div class="muted" style="margin-top:8px;">candidate=${item.candidate_id}</div>
-          <div class="muted">outbound=${item.outbound_message_id || '-'}</div>
-        </div>`).join('') : '<div class="muted">No attempts yet.</div>';
+          <div><span class="label">${formatStatusLabel(item.status)}</span> ${formatSenderLabel(item.sender_type)}</div>
+          <div class="muted" style="margin-top:8px;">候选=${item.candidate_id}</div>
+          <div class="muted">外发消息=${item.outbound_message_id || '-'}</div>
+        </div>`).join('') : '<div class="muted">暂无发送尝试。</div>';
     }
 
     function renderPlannerAudits(items) {
       document.getElementById('planner-audits').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.matched ? 'matched' : 'blocked'}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">decision=${item.decision_reason}</div>
-          <div class="muted">scenario=${item.scenario_id || '-'} · bot=${item.bot_id || '-'}</div>
-        </div>`).join('') : '<div class="muted">No planner audits yet.</div>';
+          <div><span class="label">${item.matched ? '已命中' : '已拦截'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">决策=${item.decision_reason}</div>
+          <div class="muted">场景=${item.scenario_id || '-'} · 机器人=${item.bot_id || '-'}</div>
+        </div>`).join('') : '<div class="muted">暂无策略审计。</div>';
     }
 
     function renderRuntimeIngests(items) {
       document.getElementById('runtime-ingests').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.source}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">pending_new_members=${item.runtime_input.pending_new_members ?? 0}</div>
-          <div class="muted">provider=${item.metadata.provider || '-'}</div>
-        </div>`).join('') : '<div class="muted">No runtime ingests yet.</div>';
+          <div><span class="label">${formatSourceLabel(item.source)}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">待欢迎新成员=${item.runtime_input.pending_new_members ?? 0}</div>
+          <div class="muted">提供方=${item.metadata.provider || '-'}</div>
+        </div>`).join('') : '<div class="muted">暂无运行态采集。</div>';
     }
 
     function renderSchedulerRuns(items) {
       document.getElementById('scheduler-runs').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.status}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">workflow=${item.workflow}</div>
-          <div class="muted">candidate=${item.candidate_id || '-'} · audit=${item.planner_audit_id || '-'}</div>
-        </div>`).join('') : '<div class="muted">No scheduler runs yet.</div>';
+          <div><span class="label">${formatStatusLabel(item.status)}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">工作流=${formatWorkflowLabel(item.workflow)}</div>
+          <div class="muted">候选=${item.candidate_id || '-'} · 审计=${item.planner_audit_id || '-'}</div>
+        </div>`).join('') : '<div class="muted">暂无调度运行。</div>';
     }
 
     function renderSchedulerConfigs(items) {
       document.getElementById('scheduler-configs').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">workflow=${item.workflow} · reviewer=${item.reviewer}</div>
+          <div><span class="label">${item.enabled ? '已启用' : '未启用'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">工作流=${formatWorkflowLabel(item.workflow)} · 审核人=${item.reviewer}</div>
           <div class="actions">
-            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">Edit config</button>
+            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">编辑配置</button>
           </div>
-        </div>`).join('') : '<div class="muted">No scheduler configs yet.</div>';
+        </div>`).join('') : '<div class="muted">暂无调度配置。</div>';
     }
 
     function renderGroupStatus(items) {
       document.getElementById('group-status-cards').innerHTML = items.length ? items.map((item) => `
         <div class="item">
-          <div><span class="label">${item.config_enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">latest run=${item.latest_scheduler_run_status || '-'} · latest candidate=${item.latest_candidate?.status || '-'}</div>
-          <div class="muted">latest ingest at=${item.latest_runtime_ingest_at || '-'} · latest run at=${item.latest_scheduler_run_at || '-'}</div>
-          <div class="muted">ingest=${item.latest_runtime_ingest?.source || '-'} · workflow=${item.latest_scheduler_config?.workflow || '-'}</div>
-          <div class="muted">latest failure=${item.latest_failure_reason || '-'}</div>
+          <div><span class="label">${item.config_enabled ? '已启用' : '未启用'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">最近运行=${formatStatusLabel(item.latest_scheduler_run_status)} · 最近候选=${formatStatusLabel(item.latest_candidate?.status)}</div>
+          <div class="muted">最近采集时间=${item.latest_runtime_ingest_at || '-'} · 最近运行时间=${item.latest_scheduler_run_at || '-'}</div>
+          <div class="muted">采集源=${item.latest_runtime_ingest?.source || '-'} · 工作流=${formatWorkflowLabel(item.latest_scheduler_config?.workflow)}</div>
+          <div class="muted">最近失败原因=${item.latest_failure_reason || '-'}</div>
           <div class="actions">
-            <button onclick="runGroupLatest('${item.group_id}')">Run latest</button>
-            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">Edit</button>
-            <button class="secondary" onclick="toggleGroupConfig('${item.group_id}', ${item.config_enabled ? 'false' : 'true'})">${item.config_enabled ? 'Disable' : 'Enable'}</button>
+            <button onclick="runGroupLatest('${item.group_id}')">执行最新</button>
+            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">编辑</button>
+            <button class="secondary" onclick="toggleGroupConfig('${item.group_id}', ${item.config_enabled ? 'false' : 'true'})">${item.config_enabled ? '停用' : '启用'}</button>
           </div>
-        </div>`).join('') : '<div class="muted">No group status yet.</div>';
+        </div>`).join('') : '<div class="muted">暂无群组状态。</div>';
     }
 
     async function applyGroupStatusFilters() {
@@ -1172,7 +1278,7 @@ def _render_dashboard_html() -> str:
         requestJson('/v1/dashboard/summary'),
         applyGroupStatusFilters(),
       ]);
-      document.getElementById('health').textContent = `Health: ${summary.health.status} · default sender=${summary.health.default_sender} · senders=${summary.health.available_senders.join(', ')}`;
+      document.getElementById('health').textContent = `系统状态：${summary.health.status} · 默认发送器=${formatSenderLabel(summary.health.default_sender)} · 可用发送器=${summary.health.available_senders.map(formatSenderLabel).join('、')}`;
       renderQueue(summary.queue);
       renderCandidates(summary.recent_candidates);
       renderAttempts(summary.recent_attempts);
@@ -1189,7 +1295,7 @@ def _render_dashboard_html() -> str:
     }
 
     async function rejectCandidate(id) {
-      await requestJson(`/v1/review/candidates/${id}/reject`, { method: 'POST', body: JSON.stringify({ reviewer: 'dashboard-ui', reason: 'Rejected from dashboard UI' }) });
+      await requestJson(`/v1/review/candidates/${id}/reject`, { method: 'POST', body: JSON.stringify({ reviewer: 'dashboard-ui', reason: '后台界面手动驳回' }) });
       await loadDashboard();
     }
 
@@ -1221,6 +1327,7 @@ def _render_dashboard_html() -> str:
     }
 
     async function saveVisualSchedulerConfig() {
+      syncSchedulerJsonFromStructuredForm();
       const payload = {
         group_id: document.getElementById('scheduler-config-group-id').value,
         enabled: document.getElementById('scheduler-config-enabled').value === 'true',
@@ -1237,6 +1344,7 @@ def _render_dashboard_html() -> str:
 
     async function updateExistingSchedulerConfig() {
       const groupId = document.getElementById('scheduler-config-group-id').value;
+      syncSchedulerJsonFromStructuredForm();
       const payload = {
         enabled: document.getElementById('scheduler-config-enabled').value === 'true',
         workflow: document.getElementById('scheduler-config-workflow').value,
@@ -1259,7 +1367,8 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(data.candidate_context || {}, null, 2);
       document.getElementById('scheduler-config-bot-config').value = JSON.stringify(data.config || {}, null, 2);
       document.getElementById('scheduler-group-id').value = data.group_id;
-      document.getElementById('scheduler-result').textContent = `Loaded config for ${data.group_id}`;
+      updateStructuredSchedulerForm();
+      document.getElementById('scheduler-result').textContent = `已加载 ${data.group_id} 的配置`;
     }
 
     async function runGroupLatest(groupId) {
@@ -1303,6 +1412,16 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-update').addEventListener('click', () => updateExistingSchedulerConfig().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
+    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id'].forEach((id) => {
+      document.getElementById(id).addEventListener('input', () => {
+        try { syncSchedulerJsonFromStructuredForm(); } catch (_) {}
+      });
+    });
+    ['scheduler-config-candidate-context', 'scheduler-config-bot-config', 'runtime-ingest-input'].forEach((id) => {
+      document.getElementById(id).addEventListener('input', () => {
+        try { updateStructuredSchedulerForm(); } catch (_) {}
+      });
+    });
     document.getElementById('scheduler-config-group-id').addEventListener('change', () => loadGroupConfigIntoForm(document.getElementById('scheduler-config-group-id').value).catch(() => {}));
     document.getElementById('group-status-filter-enabled').addEventListener('change', () => loadDashboard().catch(console.error));
     document.getElementById('group-status-sort').addEventListener('change', () => loadDashboard().catch(console.error));
@@ -1317,7 +1436,7 @@ def _render_dashboard_html() -> str:
     }));
     document.getElementById('planner-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
     loadDashboard().catch((error) => {
-      document.getElementById('health').textContent = `Dashboard load failed: ${error}`;
+      document.getElementById('health').textContent = `后台加载失败：${error}`;
     });
   </script>
 </body>
