@@ -46,6 +46,9 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'id="scheduler-form-cooldown-minutes-hint"' in html
     assert 'id="scheduler-form-pending-threshold"' in html
     assert 'id="scheduler-form-pending-threshold-hint"' in html
+    assert 'id="scheduler-form-diff-preview"' in html
+    assert 'id="scheduler-change-summary"' in html
+    assert 'id="scheduler-repair-receipt"' in html
     assert 'id="scheduler-form-dirty-banner"' in html
     assert 'id="scheduler-form-recommend-cooldown"' in html
     assert 'id="scheduler-form-recommend-threshold"' in html
@@ -92,6 +95,12 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'getScenarioRecommendations' in html
     assert 'renderScenarioRecommendationButtons' in html
     assert 'applyRiskFix' in html
+    assert 'captureSchedulerBaseline' in html
+    assert 'computeSchedulerDiffItems' in html
+    assert 'renderSchedulerDiffPreview' in html
+    assert 'recordSchedulerChangeSummary' in html
+    assert 'renderSchedulerChangeSummary' in html
+    assert 'showSchedulerRepairReceipt' in html
     assert 'buildSchedulerActionHints' in html
     assert 'renderSchedulerFieldHints' in html
     assert 'markSchedulerFormDirty' in html
@@ -159,6 +168,12 @@ def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
     assert '一键建议：冷场阈值 0 人' in html
     assert '一键建议：预热时段 18:00-22:00' in html
     assert '点击风险项可直接修复' in html
+    assert '保存前差异预览' in html
+    assert '最近一次变更摘要' in html
+    assert '已应用推荐修复' in html
+    assert '群名称：妈妈成长群 → 当前群组' in html
+    assert '最近一次操作：已加载默认欢迎配置' in html
+    assert '修复回执：已应用推荐修复，可继续保存。' in html
     assert '建议先处理风险项，再进入自动调度。' in html
     assert '字段即时提示' in html
     assert '当前存在未保存修改，建议先保存再离开当前配置。' in html

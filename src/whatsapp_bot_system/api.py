@@ -1073,6 +1073,18 @@ def _render_dashboard_html() -> str:
                   <div style="font-weight:600;margin-bottom:6px;">字段即时提示</div>
                   <div id="scheduler-form-field-tip" class="muted">当前是欢迎场景，建议优先控制冷却时间和阈值，保证第一轮欢迎及时发出。</div>
                 </div>
+                <div class="item" style="margin-top:12px;background:#fff7ed;border-color:#fed7aa;">
+                  <div style="font-weight:600;margin-bottom:6px;">保存前差异预览</div>
+                  <div id="scheduler-form-diff-preview" class="muted">群名称：妈妈成长群 → 当前群组</div>
+                </div>
+                <div class="item" style="margin-top:12px;background:#f8fafc;border-color:#dbeafe;">
+                  <div style="font-weight:600;margin-bottom:6px;">最近一次变更摘要</div>
+                  <div id="scheduler-change-summary" class="muted">最近一次操作：已加载默认欢迎配置</div>
+                </div>
+                <div class="item" style="margin-top:12px;background:#ecfeff;border-color:#a5f3fc;">
+                  <div style="font-weight:600;margin-bottom:6px;">已应用推荐修复</div>
+                  <div id="scheduler-repair-receipt" class="muted">修复回执：已应用推荐修复，可继续保存。</div>
+                </div>
               </div>
             </div>
           </div>
@@ -1195,6 +1207,8 @@ def _render_dashboard_html() -> str:
     let schedulerConfigSavedAtLabel = '未保存';
     let schedulerToastTimer = null;
     let schedulerFormDirty = false;
+    let schedulerBaselineSnapshot = null;
+    let schedulerLastChangeSummary = '最近一次操作：已加载默认欢迎配置';
     document.getElementById('planner-config').value = JSON.stringify(defaultConfig, null, 2);
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
@@ -1211,12 +1225,77 @@ def _render_dashboard_html() -> str:
       schedulerFormDirty = true;
       const banner = document.getElementById('scheduler-form-dirty-banner');
       banner.style.display = 'block';
+      renderSchedulerDiffPreview();
+      renderSchedulerConfigStatusCard('已同步到 JSON，可继续保存或更新现有配置。');
     }
 
     function clearSchedulerFormDirty() {
       schedulerFormDirty = false;
       const banner = document.getElementById('scheduler-form-dirty-banner');
       banner.style.display = 'none';
+      renderSchedulerDiffPreview();
+    }
+
+    function captureSchedulerBaseline(reason = '最近一次操作：已加载默认欢迎配置') {
+      schedulerBaselineSnapshot = {
+        group_name: document.getElementById('scheduler-form-group-name').value || '妈妈成长群',
+        rules_summary: document.getElementById('scheduler-form-rules-summary').value || '请先查看群公告。',
+        provider: document.getElementById('scheduler-form-provider').value || '桥接服务A',
+        bot_display_name: document.getElementById('scheduler-form-bot-display-name').value || 'Luna',
+        scenario_id: document.getElementById('scheduler-form-scenario-id').value || 'welcome',
+        content_mode: document.getElementById('scheduler-form-content-mode').value || 'template_rewrite',
+        active_start: document.getElementById('scheduler-form-active-start').value || '08:00',
+        active_end: document.getElementById('scheduler-form-active-end').value || '22:00',
+        cooldown_seconds: String(document.getElementById('scheduler-form-cooldown-seconds').value || 600),
+        pending_threshold: String(document.getElementById('scheduler-form-pending-threshold').value || 1),
+      };
+      schedulerLastChangeSummary = reason;
+      renderSchedulerChangeSummary();
+      renderSchedulerDiffPreview();
+    }
+
+    function computeSchedulerDiffItems() {
+      const baseline = schedulerBaselineSnapshot || {};
+      const current = {
+        group_name: document.getElementById('scheduler-form-group-name').value || '当前群组',
+        cooldown_seconds: String(document.getElementById('scheduler-form-cooldown-seconds').value || 0),
+        pending_threshold: String(document.getElementById('scheduler-form-pending-threshold').value || 0),
+        active_window: `${document.getElementById('scheduler-form-active-start').value || '08:00'}-${document.getElementById('scheduler-form-active-end').value || '22:00'}`,
+      };
+      const previousWindow = `${baseline.active_start || '08:00'}-${baseline.active_end || '22:00'}`;
+      const items = [];
+      if ((baseline.group_name || '妈妈成长群') !== current.group_name) {
+        items.push(`群名称：${baseline.group_name || '妈妈成长群'} → ${current.group_name}`);
+      }
+      if ((baseline.cooldown_seconds || '600') !== current.cooldown_seconds) {
+        items.push(`冷却时间：${baseline.cooldown_seconds || '600'} → ${current.cooldown_seconds}`);
+      }
+      if ((baseline.pending_threshold || '1') !== current.pending_threshold) {
+        items.push(`欢迎阈值：${baseline.pending_threshold || '1'} → ${current.pending_threshold}`);
+      }
+      if (previousWindow !== current.active_window) {
+        items.push(`活跃时段：${previousWindow} → ${current.active_window}`);
+      }
+      return items;
+    }
+
+    function renderSchedulerDiffPreview() {
+      const target = document.getElementById('scheduler-form-diff-preview');
+      const items = computeSchedulerDiffItems();
+      target.textContent = items.length ? items.join('；') : '当前没有待保存差异。';
+    }
+
+    function recordSchedulerChangeSummary(message) {
+      schedulerLastChangeSummary = `最近一次操作：${message}`;
+      renderSchedulerChangeSummary();
+    }
+
+    function renderSchedulerChangeSummary() {
+      document.getElementById('scheduler-change-summary').textContent = schedulerLastChangeSummary;
+    }
+
+    function showSchedulerRepairReceipt(message = '修复回执：已应用推荐修复，可继续保存。') {
+      document.getElementById('scheduler-repair-receipt').textContent = message;
     }
 
     function getScenarioRecommendations(scenario) {
@@ -1241,6 +1320,8 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-cooldown-seconds').value = preset.cooldown;
       syncSchedulerJsonFromStructuredForm();
       markSchedulerFormDirty();
+      recordSchedulerChangeSummary(`已应用推荐冷却 ${preset.cooldown} 秒`);
+      showSchedulerRepairReceipt();
     }
 
     function applyRecommendedThreshold() {
@@ -1248,6 +1329,8 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-pending-threshold').value = preset.threshold;
       syncSchedulerJsonFromStructuredForm();
       markSchedulerFormDirty();
+      recordSchedulerChangeSummary(`已应用推荐阈值 ${preset.threshold} 人`);
+      showSchedulerRepairReceipt();
     }
 
     function applyRecommendedWindow() {
@@ -1256,6 +1339,8 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-active-end').value = preset.windowEnd;
       syncSchedulerJsonFromStructuredForm();
       markSchedulerFormDirty();
+      recordSchedulerChangeSummary(`已应用推荐时段 ${preset.windowStart}-${preset.windowEnd}`);
+      showSchedulerRepairReceipt();
     }
 
     function applySchedulerRecommendations() {
@@ -1318,6 +1403,8 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-cooldown-minutes-hint').textContent = `约 ${((Number(firstBot.cooldown_seconds ?? 0)) / 60).toFixed(1)} 分钟`;
       document.getElementById('scheduler-form-pending-threshold').value = candidateContext.pending_new_members ?? 0;
       renderScenarioRecommendationButtons(document.getElementById('scheduler-form-scenario-id').value);
+      recordSchedulerChangeSummary('已加载默认欢迎配置');
+      showSchedulerRepairReceipt('修复回执：已应用推荐修复，可继续保存。');
       renderSchedulerPreviewCard();
       renderSchedulerConfigStatusCard();
     }
@@ -1376,6 +1463,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('runtime-ingest-input').value = JSON.stringify(runtimeIngest, null, 2);
       renderSchedulerPreviewCard();
       renderSchedulerConfigStatusCard('已同步到 JSON，可继续保存或更新现有配置。');
+      captureSchedulerBaseline('最近一次操作：已同步结构化表单');
       clearSchedulerFormDirty();
     }
 
@@ -1563,20 +1651,24 @@ def _render_dashboard_html() -> str:
     function applyRiskFix(tip) {
       if (tip.includes('冷却时间低于 3 分钟') || tip.includes('直接发送工作流')) {
         applyRecommendedCooldown();
+        showSchedulerRepairReceipt('修复回执：已应用推荐冷却修复，可继续保存。');
         return;
       }
       if (tip.includes('欢迎场景阈值超过 10 人')) {
         applyRecommendedThreshold();
+        showSchedulerRepairReceipt('修复回执：已应用推荐阈值修复，可继续保存。');
         return;
       }
       if (tip.includes('活跃时段长达') || tip.includes('活动预热时段少于 2 小时')) {
         applyRecommendedWindow();
+        showSchedulerRepairReceipt('修复回执：已应用推荐时段修复，可继续保存。');
         return;
       }
       if (tip.includes('未启用状态')) {
         document.getElementById('scheduler-config-enabled').value = 'true';
         syncSchedulerJsonFromStructuredForm();
         markSchedulerFormDirty();
+        showSchedulerRepairReceipt('修复回执：已启用当前群，可继续保存。');
       }
     }
 
@@ -1587,6 +1679,7 @@ def _render_dashboard_html() -> str:
         return;
       }
       container.innerHTML = riskTips.map((tip) => `<button type="button" class="scheduler-risk-badge" onclick="applyRiskFix(${JSON.stringify(tip)})">${tip}</button>`).join('');
+      showSchedulerRepairReceipt('修复回执：可点击风险项直接应用推荐修复。');
     }
 
     function buildSchedulerActionHints(riskTips, scenario, workflow) {
@@ -1915,6 +2008,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
       schedulerConfigSavedAtLabel = data.created_at || '刚刚保存';
       renderSchedulerConfigStatusCard('当前配置已同步，可直接进入调度。');
+      captureSchedulerBaseline(`最近一次操作：已新建 ${payload.group_id}`);
       clearSchedulerFormDirty();
       showSchedulerToast(`保存成功：已新建 ${payload.group_id}`);
       document.getElementById('scheduler-group-id').value = payload.group_id;
@@ -1935,6 +2029,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
       schedulerConfigSavedAtLabel = data.created_at || '刚刚保存';
       renderSchedulerConfigStatusCard('当前配置已同步，可直接进入调度。');
+      captureSchedulerBaseline(`最近一次操作：已更新 ${groupId}`);
       clearSchedulerFormDirty();
       showSchedulerToast(`更新成功：已同步现有配置 ${groupId}`);
       document.getElementById('scheduler-group-id').value = groupId;
@@ -1953,6 +2048,7 @@ def _render_dashboard_html() -> str:
       schedulerConfigSavedAtLabel = data.created_at || '已存在配置';
       updateStructuredSchedulerForm();
       clearSchedulerFormDirty();
+      captureSchedulerBaseline(`最近一次操作：已载入 ${data.group_id} 配置`);
       renderSchedulerConfigStatusCard('当前配置已从现有记录载入。');
       toggleSchedulerAdvancedMode(true);
       document.getElementById('scheduler-result').textContent = `已加载 ${data.group_id} 的配置`;
