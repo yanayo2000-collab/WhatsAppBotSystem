@@ -8,10 +8,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
+from whatsapp_bot_system.executor import MockSender, SendExecutionService
 from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
 from whatsapp_bot_system.review_flow import ReviewFlowService
 from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
+from whatsapp_bot_system.templates import TemplateCatalog, render_candidate_from_template
 
 
 class RuntimeEventPayload(BaseModel):
@@ -61,10 +63,19 @@ class MarkFailedRequest(BaseModel):
     error: str
 
 
+class RenderTemplateRequest(BaseModel):
+    catalog: dict
+    bot_id: str
+    scenario_id: str
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 def create_app(db_path: str | Path | None = None) -> FastAPI:
-    resolved_db_path = Path(db_path) if db_path is not None else Path('data/review_flow.db')
+    resolved_db_path = ':memory:' if db_path is None else Path(db_path)
     store = SQLiteCandidateMessageStore(resolved_db_path)
     review_service = ReviewFlowService(store)
+    sender = MockSender()
+    execution_service = SendExecutionService(review_service, sender)
     app = FastAPI(title='WhatsApp Bot System', version='0.1.0')
 
     @app.get('/health')
@@ -100,7 +111,25 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 'scenario_id': candidate.scenario_id,
                 'content_mode': candidate.content_mode,
                 'text': candidate.text,
+                'metadata': candidate.metadata,
             },
+        }
+
+    @app.post('/v1/templates/render')
+    def render_template(request: RenderTemplateRequest) -> dict:
+        catalog = TemplateCatalog.from_dict(request.catalog)
+        rendered = render_candidate_from_template(
+            catalog=catalog,
+            bot_id=request.bot_id,
+            scenario_id=request.scenario_id,
+            context=request.context,
+        )
+        return {
+            'bot_display_name': rendered.bot_display_name,
+            'scenario_id': rendered.scenario_id,
+            'content_mode': rendered.content_mode,
+            'text': rendered.text,
+            'metadata': rendered.metadata,
         }
 
     @app.post('/v1/review/candidates')
@@ -149,10 +178,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def mark_candidate_failed(candidate_id: str, request: MarkFailedRequest) -> dict:
         return _apply_transition(lambda: review_service.mark_failed(candidate_id, error=request.error))
 
+    @app.post('/v1/execution/candidates/{candidate_id}/send')
+    def send_candidate(candidate_id: str) -> dict:
+        return _apply_transition(lambda: execution_service.send_candidate(candidate_id))
+
     return app
 
 
-app = create_app()
+app = create_app(db_path=Path('data/review_flow.db'))
 
 
 def _build_state_from_request(request: PlannerDryRunRequest) -> GroupRuntimeState:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +13,7 @@ class CandidateMessage:
     bot_display_name: str
     content_mode: str
     text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def build_runtime_state(raw: dict[str, Any]) -> GroupRuntimeState:
