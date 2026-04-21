@@ -29,3 +29,5 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'loadGroupConfigIntoForm' in html
     assert 'applyGroupStatusFilters' in html
     assert 'updateExistingSchedulerConfig' in html
+    assert 'latest ingest at=${item.latest_runtime_ingest_at || \'-\'}' in html
+    assert 'latest failure=${item.latest_failure_reason || \'-\'}' in html

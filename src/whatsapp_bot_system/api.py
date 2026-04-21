@@ -227,6 +227,7 @@ def create_app(
         config_map = {item.group_id: item for item in scheduler_config_store.list()}
         ingest_map = {item.group_id: item for item in runtime_ingest_store.list()}
         run_map = {item.group_id: item for item in scheduler_run_store.list()}
+        audit_map = {item.id: item for item in planner_audit_store.list()}
         candidate_map = {}
         for item in review_service.list_candidates():
             group_id = str(item.context.get('group_id') or '')
@@ -234,14 +235,14 @@ def create_app(
                 candidate_map[group_id] = item
         group_ids = sorted(set(config_map) | set(ingest_map) | set(run_map) | set(candidate_map))
         items = [
-            {
-                'group_id': group_id,
-                'config_enabled': config_map[group_id].enabled if group_id in config_map else False,
-                'latest_scheduler_config': None if group_id not in config_map else _serialize_scheduler_config(config_map[group_id]),
-                'latest_runtime_ingest': None if group_id not in ingest_map else _serialize_runtime_ingest(ingest_map[group_id]),
-                'latest_scheduler_run': None if group_id not in run_map else _serialize_scheduler_run(run_map[group_id]),
-                'latest_candidate': None if group_id not in candidate_map else _serialize_candidate(candidate_map[group_id]),
-            }
+            _build_group_status_item(
+                group_id=group_id,
+                config_record=config_map.get(group_id),
+                ingest_record=ingest_map.get(group_id),
+                scheduler_run_record=run_map.get(group_id),
+                planner_audit_record=audit_map.get(run_map[group_id].planner_audit_id) if group_id in run_map and run_map[group_id].planner_audit_id else None,
+                candidate_record=candidate_map.get(group_id),
+            )
             for group_id in group_ids
         ]
         if enabled_only:
@@ -852,6 +853,37 @@ def _serialize_scheduler_config(record) -> dict:
     }
 
 
+def _build_group_status_item(
+    *,
+    group_id: str,
+    config_record,
+    ingest_record,
+    scheduler_run_record,
+    planner_audit_record,
+    candidate_record,
+) -> dict:
+    serialized_ingest = None if ingest_record is None else _serialize_runtime_ingest(ingest_record)
+    serialized_run = None if scheduler_run_record is None else _serialize_scheduler_run(scheduler_run_record)
+    serialized_candidate = None if candidate_record is None else _serialize_candidate(candidate_record)
+    latest_failure_reason = None
+    if serialized_candidate and serialized_candidate.get('error_message'):
+        latest_failure_reason = serialized_candidate['error_message']
+    elif planner_audit_record is not None:
+        latest_failure_reason = planner_audit_record.decision_reason
+    return {
+        'group_id': group_id,
+        'config_enabled': False if config_record is None else config_record.enabled,
+        'latest_scheduler_config': None if config_record is None else _serialize_scheduler_config(config_record),
+        'latest_runtime_ingest': serialized_ingest,
+        'latest_runtime_ingest_at': None if serialized_ingest is None else serialized_ingest['created_at'],
+        'latest_scheduler_run': serialized_run,
+        'latest_scheduler_run_at': None if serialized_run is None else serialized_run['created_at'],
+        'latest_scheduler_run_status': None if serialized_run is None else serialized_run['status'],
+        'latest_candidate': serialized_candidate,
+        'latest_failure_reason': latest_failure_reason,
+    }
+
+
 def _render_dashboard_html() -> str:
     return """
 <!doctype html>
@@ -1117,8 +1149,10 @@ def _render_dashboard_html() -> str:
       document.getElementById('group-status-cards').innerHTML = items.length ? items.map((item) => `
         <div class="item">
           <div><span class="label">${item.config_enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
-          <div class="muted" style="margin-top:8px;">latest run=${item.latest_scheduler_run?.status || '-'} · latest candidate=${item.latest_candidate?.status || '-'}</div>
+          <div class="muted" style="margin-top:8px;">latest run=${item.latest_scheduler_run_status || '-'} · latest candidate=${item.latest_candidate?.status || '-'}</div>
+          <div class="muted">latest ingest at=${item.latest_runtime_ingest_at || '-'} · latest run at=${item.latest_scheduler_run_at || '-'}</div>
           <div class="muted">ingest=${item.latest_runtime_ingest?.source || '-'} · workflow=${item.latest_scheduler_config?.workflow || '-'}</div>
+          <div class="muted">latest failure=${item.latest_failure_reason || '-'}</div>
           <div class="actions">
             <button onclick="runGroupLatest('${item.group_id}')">Run latest</button>
             <button onclick="loadGroupConfigIntoForm('${item.group_id}')">Edit</button>
