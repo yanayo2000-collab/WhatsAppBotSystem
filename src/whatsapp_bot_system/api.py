@@ -8,7 +8,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
-from whatsapp_bot_system.executor import MockSender, SendExecutionService
+from whatsapp_bot_system.execution_store_sqlite import SQLiteExecutionAttemptStore
+from whatsapp_bot_system.executor import DryRunSender, MockSender, SendExecutionService, SenderRegistry
 from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
 from whatsapp_bot_system.review_flow import ReviewFlowService
 from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
@@ -70,17 +71,38 @@ class RenderTemplateRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+class SendCandidateRequest(BaseModel):
+    sender: str | None = None
+
+
+def create_app(
+    db_path: str | Path | None = None,
+    execution_db_path: str | Path | None = None,
+    default_sender: str = 'mock',
+) -> FastAPI:
     resolved_db_path = ':memory:' if db_path is None else Path(db_path)
+    resolved_execution_db_path = ':memory:' if execution_db_path is None else Path(execution_db_path)
     store = SQLiteCandidateMessageStore(resolved_db_path)
+    attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
     review_service = ReviewFlowService(store)
-    sender = MockSender()
-    execution_service = SendExecutionService(review_service, sender)
+    sender_registry = SenderRegistry(
+        default_sender=default_sender,
+        senders={
+            'mock': MockSender(),
+            'dry_run': DryRunSender(),
+        },
+    )
+    execution_service = SendExecutionService(review_service, sender_registry, attempt_store)
     app = FastAPI(title='WhatsApp Bot System', version='0.1.0')
 
     @app.get('/health')
     def health() -> dict:
-        return {'status': 'ok', 'review_db_path': str(resolved_db_path)}
+        return {
+            'status': 'ok',
+            'review_db_path': str(resolved_db_path),
+            'execution_db_path': str(resolved_execution_db_path),
+            'default_sender': default_sender,
+        }
 
     @app.post('/v1/planner/dry-run')
     def planner_dry_run(request: PlannerDryRunRequest) -> dict:
@@ -179,13 +201,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         return _apply_transition(lambda: review_service.mark_failed(candidate_id, error=request.error))
 
     @app.post('/v1/execution/candidates/{candidate_id}/send')
-    def send_candidate(candidate_id: str) -> dict:
-        return _apply_transition(lambda: execution_service.send_candidate(candidate_id))
+    def send_candidate(candidate_id: str, request: SendCandidateRequest | None = None) -> dict:
+        sender_name = None if request is None else request.sender
+        return _apply_transition(lambda: execution_service.send_candidate(candidate_id, sender_name=sender_name))
+
+    @app.get('/v1/execution/candidates/{candidate_id}/attempts')
+    def list_attempts(candidate_id: str) -> dict:
+        items = execution_service.list_attempts(candidate_id)
+        return {'items': [_serialize_attempt(item) for item in items]}
 
     return app
 
 
-app = create_app(db_path=Path('data/review_flow.db'))
+app = create_app(db_path=Path('data/review_flow.db'), execution_db_path=Path('data/execution_attempts.db'))
 
 
 def _build_state_from_request(request: PlannerDryRunRequest) -> GroupRuntimeState:
@@ -239,4 +267,16 @@ def _serialize_candidate(record) -> dict:
         'review_reason': record.review_reason,
         'outbound_message_id': record.outbound_message_id,
         'error_message': record.error_message,
+    }
+
+
+def _serialize_attempt(record) -> dict:
+    return {
+        'id': record.id,
+        'candidate_id': record.candidate_id,
+        'sender_type': record.sender_type,
+        'status': record.status,
+        'outbound_message_id': record.outbound_message_id,
+        'error_message': record.error_message,
+        'created_at': record.created_at,
     }

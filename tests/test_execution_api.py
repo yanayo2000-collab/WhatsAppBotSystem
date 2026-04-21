@@ -4,7 +4,7 @@ from whatsapp_bot_system.api import create_app
 
 
 def test_template_render_endpoint_and_send_execution_flow(tmp_path):
-    app = create_app(db_path=tmp_path / 'review_flow.db')
+    app = create_app(db_path=tmp_path / 'review_flow.db', execution_db_path=tmp_path / 'execution.db', default_sender='mock')
     client = TestClient(app)
 
     render_response = client.post(
