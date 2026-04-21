@@ -13,6 +13,8 @@ WhatsApp 群组多账号 AI 机器人系统 MVP 后端。
 - SQLite 持久化（review / execution attempts）
 - Sender registry（mock / dry_run / webhook）
 - FastAPI 接口
+- 内置前端运营控制台（首页 Dashboard）
+- 前端可调用的一键 planner 执行入口
 
 ## 本地启动
 ```bash
@@ -21,6 +23,10 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 uvicorn whatsapp_bot_system.api:app --reload --app-dir src
 ```
+
+启动后直接打开：
+- Dashboard：`http://127.0.0.1:8000/`
+- OpenAPI：`http://127.0.0.1:8000/docs`
 
 ## 使用配置文件启动
 当前仓库已支持从配置对象构建 app，推荐把 `config.example.yaml` 复制为你自己的配置文件，再通过小入口脚本或 Python 调用启动：
@@ -46,6 +52,11 @@ python -m pytest -q
 
 ### Planner
 - `POST /v1/planner/dry-run`
+- `POST /v1/ops/planner/execute`（生成 candidate，并可直接进入 pending_review）
+
+### Dashboard
+- `GET /`
+- `GET /v1/dashboard/summary`
 
 ### Templates
 - `POST /v1/templates/render`
