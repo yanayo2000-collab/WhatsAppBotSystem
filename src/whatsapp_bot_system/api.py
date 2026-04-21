@@ -91,6 +91,14 @@ class SchedulerConfigRequest(BaseModel):
     config: dict[str, Any]
 
 
+class SchedulerConfigUpdateRequest(BaseModel):
+    enabled: bool
+    workflow: str
+    reviewer: str
+    candidate_context: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any]
+
+
 class CreateCandidateRequest(BaseModel):
     bot_id: str
     bot_display_name: str
@@ -214,6 +222,31 @@ def create_app(
             'recent_scheduler_configs': [_serialize_scheduler_config(item) for item in scheduler_config_store.list()[-10:]],
         }
 
+    @app.get('/v1/dashboard/group-status')
+    def dashboard_group_status() -> dict:
+        config_map = {item.group_id: item for item in scheduler_config_store.list()}
+        ingest_map = {item.group_id: item for item in runtime_ingest_store.list()}
+        run_map = {item.group_id: item for item in scheduler_run_store.list()}
+        candidate_map = {}
+        for item in review_service.list_candidates():
+            group_id = str(item.context.get('group_id') or '')
+            if group_id and group_id not in candidate_map:
+                candidate_map[group_id] = item
+        group_ids = sorted(set(config_map) | set(ingest_map) | set(run_map) | set(candidate_map))
+        return {
+            'items': [
+                {
+                    'group_id': group_id,
+                    'config_enabled': config_map[group_id].enabled if group_id in config_map else False,
+                    'latest_scheduler_config': None if group_id not in config_map else _serialize_scheduler_config(config_map[group_id]),
+                    'latest_runtime_ingest': None if group_id not in ingest_map else _serialize_runtime_ingest(ingest_map[group_id]),
+                    'latest_scheduler_run': None if group_id not in run_map else _serialize_scheduler_run(run_map[group_id]),
+                    'latest_candidate': None if group_id not in candidate_map else _serialize_candidate(candidate_map[group_id]),
+                }
+                for group_id in group_ids
+            ]
+        }
+
     @app.post('/v1/scheduler/configs')
     def create_scheduler_config(request: SchedulerConfigRequest) -> dict:
         record = SchedulerConfigRecord(
@@ -239,6 +272,21 @@ def create_app(
             record = scheduler_config_store.latest(group_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f'No scheduler config found for group: {group_id}') from exc
+        return _serialize_scheduler_config(record)
+
+    @app.put('/v1/scheduler/configs/{group_id}')
+    def update_scheduler_config(group_id: str, request: SchedulerConfigUpdateRequest) -> dict:
+        record = SchedulerConfigRecord(
+            id=f'scfg_{uuid4().hex[:12]}',
+            group_id=group_id,
+            enabled=request.enabled,
+            workflow=request.workflow,
+            reviewer=request.reviewer,
+            candidate_context=request.candidate_context,
+            config=request.config,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        scheduler_config_store.save(record)
         return _serialize_scheduler_config(record)
 
     @app.get('/v1/scheduler/runs')
@@ -620,7 +668,7 @@ def _execute_scheduler_latest(*, request: SchedulerExecuteLatestRequest, runtime
         scenario_id=plan.scenario_id,
         content_mode=plan.content_mode,
         text=candidate.text,
-        context=request.candidate_context,
+        context={**request.candidate_context, 'group_id': request.group_id},
     )
     record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=True, review_service=review_service, execution_service=execution_service)
     run = scheduler_run_store.save(
@@ -829,13 +877,18 @@ def _render_dashboard_html() -> str:
     </section>
 
     <section class="panel">
-      <h2>Runtime Webhook / Scheduler</h2>
+      <h2>Group Status Overview</h2>
+      <div id="group-status-cards"></div>
+    </section>
+
+    <section class="panel" id="scheduler-config-editor">
+      <h2>Scheduler Config Editor</h2>
       <div class="row">
         <div>
-          <label>Runtime Ingest JSON</label>
-          <textarea id="runtime-ingest-input"></textarea>
+          <label>Scheduler Config JSON</label>
+          <textarea id="scheduler-config-input"></textarea>
           <div class="actions">
-            <button id="runtime-ingest-submit">Ingest Runtime</button>
+            <button id="scheduler-config-save">Save Scheduler Config</button>
           </div>
         </div>
         <div>
@@ -848,12 +901,27 @@ def _render_dashboard_html() -> str:
           <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
         </div>
       </div>
-      <h3>Recent Runtime Ingests</h3>
-      <div id="runtime-ingests"></div>
-      <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
-      <div id="scheduler-runs"></div>
-      <h3 style="margin-top:16px;">Recent Scheduler Configs</h3>
+      <h3>Recent Scheduler Configs</h3>
       <div id="scheduler-configs"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Runtime Webhook / Scheduler</h2>
+      <div class="row">
+        <div>
+          <label>Runtime Ingest JSON</label>
+          <textarea id="runtime-ingest-input"></textarea>
+          <div class="actions">
+            <button id="runtime-ingest-submit">Ingest Runtime</button>
+          </div>
+        </div>
+        <div>
+          <h3>Recent Runtime Ingests</h3>
+          <div id="runtime-ingests"></div>
+          <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
+          <div id="scheduler-runs"></div>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -867,10 +935,12 @@ def _render_dashboard_html() -> str:
     const defaultRuntime = { group_id: '120363001234567890@g.us', now: '2026-04-21T12:00:00+00:00', pending_new_members: 1, messages: [] };
     const defaultContext = { group_name: 'Moms Club', rules_summary: 'Please read the pinned guide.', pending_new_members: 1 };
     const defaultRuntimeIngest = { source: 'webhook', group_id: '120363001234567890@g.us', runtime_input: defaultRuntime, metadata: { provider: 'bridge-a' } };
+    const defaultSchedulerConfig = { group_id: '120363001234567890@g.us', enabled: true, workflow: 'send', reviewer: 'dashboard-scheduler', candidate_context: defaultContext, config: defaultConfig };
     document.getElementById('planner-config').value = JSON.stringify(defaultConfig, null, 2);
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
     document.getElementById('runtime-ingest-input').value = JSON.stringify(defaultRuntimeIngest, null, 2);
+    document.getElementById('scheduler-config-input').value = JSON.stringify(defaultSchedulerConfig, null, 2);
     document.getElementById('scheduler-group-id').value = '120363001234567890@g.us';
 
     async function requestJson(url, options) {
@@ -945,16 +1015,29 @@ def _render_dashboard_html() -> str:
         </div>`).join('') : '<div class="muted">No scheduler configs yet.</div>';
     }
 
+    function renderGroupStatus(items) {
+      document.getElementById('group-status-cards').innerHTML = items.length ? items.map((item) => `
+        <div class="item">
+          <div><span class="label">${item.config_enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">latest run=${item.latest_scheduler_run?.status || '-'} · latest candidate=${item.latest_candidate?.status || '-'}</div>
+          <div class="muted">ingest=${item.latest_runtime_ingest?.source || '-'} · workflow=${item.latest_scheduler_config?.workflow || '-'}</div>
+        </div>`).join('') : '<div class="muted">No group status yet.</div>';
+    }
+
     async function loadDashboard() {
-      const data = await requestJson('/v1/dashboard/summary');
-      document.getElementById('health').textContent = `Health: ${data.health.status} · default sender=${data.health.default_sender} · senders=${data.health.available_senders.join(', ')}`;
-      renderQueue(data.queue);
-      renderCandidates(data.recent_candidates);
-      renderAttempts(data.recent_attempts);
-      renderPlannerAudits(data.recent_planner_audits || []);
-      renderRuntimeIngests(data.recent_runtime_ingests || []);
-      renderSchedulerRuns(data.recent_scheduler_runs || []);
-      renderSchedulerConfigs(data.recent_scheduler_configs || []);
+      const [summary, groupStatus] = await Promise.all([
+        requestJson('/v1/dashboard/summary'),
+        requestJson('/v1/dashboard/group-status'),
+      ]);
+      document.getElementById('health').textContent = `Health: ${summary.health.status} · default sender=${summary.health.default_sender} · senders=${summary.health.available_senders.join(', ')}`;
+      renderQueue(summary.queue);
+      renderCandidates(summary.recent_candidates);
+      renderAttempts(summary.recent_attempts);
+      renderPlannerAudits(summary.recent_planner_audits || []);
+      renderRuntimeIngests(summary.recent_runtime_ingests || []);
+      renderSchedulerRuns(summary.recent_scheduler_runs || []);
+      renderSchedulerConfigs(summary.recent_scheduler_configs || []);
+      renderGroupStatus(groupStatus.items || []);
     }
 
     async function approveCandidate(id) {
@@ -994,6 +1077,14 @@ def _render_dashboard_html() -> str:
       await loadDashboard();
     }
 
+    async function saveSchedulerConfig() {
+      const payload = JSON.parse(document.getElementById('scheduler-config-input').value);
+      const data = await requestJson('/v1/scheduler/configs', { method: 'POST', body: JSON.stringify(payload) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('scheduler-group-id').value = payload.group_id;
+      await loadDashboard();
+    }
+
     async function runSchedulerLatest() {
       const payload = {
         config: JSON.parse(document.getElementById('planner-config').value),
@@ -1015,6 +1106,9 @@ def _render_dashboard_html() -> str:
 
     document.getElementById('planner-submit').addEventListener('click', () => executePlanner().catch((error) => {
       document.getElementById('planner-result').textContent = String(error);
+    }));
+    document.getElementById('scheduler-config-save').addEventListener('click', () => saveSchedulerConfig().catch((error) => {
+      document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('runtime-ingest-submit').addEventListener('click', () => ingestRuntime().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
