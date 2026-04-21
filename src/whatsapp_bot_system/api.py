@@ -1020,6 +1020,12 @@ def _render_dashboard_html() -> str:
               <option value="fixed_copy">固定话术</option>
               <option value="ai_generate">AI 生成</option>
             </select>
+            <label style="display:block;margin-top:12px;">活跃时段</label>
+            <input id="scheduler-form-active-hours" placeholder="例如 8,9,10,11,12" />
+            <label style="display:block;margin-top:12px;">冷却时间（秒）</label>
+            <input id="scheduler-form-cooldown-seconds" type="number" min="0" />
+            <label style="display:block;margin-top:12px;">新成员阈值</label>
+            <input id="scheduler-form-pending-threshold" type="number" min="0" />
           </div>
         </div>
       </div>
@@ -1127,12 +1133,23 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-bot-role').value = firstBot.role || 'welcomer';
       document.getElementById('scheduler-form-scenario-id').value = firstScenario.id || 'welcome';
       document.getElementById('scheduler-form-content-mode').value = firstScenario.content_mode || (Array.isArray(firstBot.content_modes) && firstBot.content_modes[0]) || 'template_rewrite';
+      document.getElementById('scheduler-form-active-hours').value = Array.isArray(firstBot.active_hours) ? firstBot.active_hours.join(',') : '';
+      document.getElementById('scheduler-form-cooldown-seconds').value = firstBot.cooldown_seconds ?? 0;
+      document.getElementById('scheduler-form-pending-threshold').value = candidateContext.pending_new_members ?? 0;
+    }
+
+    function parseActiveHoursInput(value) {
+      return String(value || '')
+        .split(',')
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 23);
     }
 
     function syncSchedulerJsonFromStructuredForm() {
       const candidateContext = JSON.parse(document.getElementById('scheduler-config-candidate-context').value || '{}');
       candidateContext.group_name = document.getElementById('scheduler-form-group-name').value.trim();
       candidateContext.rules_summary = document.getElementById('scheduler-form-rules-summary').value.trim();
+      candidateContext.pending_new_members = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
       document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(candidateContext, null, 2);
 
       const config = JSON.parse(document.getElementById('scheduler-config-bot-config').value || '{}');
@@ -1145,6 +1162,8 @@ def _render_dashboard_html() -> str:
       config.bots[0].display_name = document.getElementById('scheduler-form-bot-display-name').value.trim();
       config.bots[0].role = document.getElementById('scheduler-form-bot-role').value.trim();
       config.bots[0].content_modes = [document.getElementById('scheduler-form-content-mode').value];
+      config.bots[0].active_hours = parseActiveHoursInput(document.getElementById('scheduler-form-active-hours').value);
+      config.bots[0].cooldown_seconds = Number(document.getElementById('scheduler-form-cooldown-seconds').value || 0);
       config.scenarios[0].id = document.getElementById('scheduler-form-scenario-id').value.trim();
       config.scenarios[0].bot_roles = [document.getElementById('scheduler-form-bot-role').value.trim()];
       config.scenarios[0].content_mode = document.getElementById('scheduler-form-content-mode').value;
@@ -1153,6 +1172,8 @@ def _render_dashboard_html() -> str:
       const runtimeIngest = JSON.parse(document.getElementById('runtime-ingest-input').value || '{}');
       runtimeIngest.metadata = runtimeIngest.metadata || {};
       runtimeIngest.metadata.provider = document.getElementById('scheduler-form-provider').value.trim();
+      runtimeIngest.runtime_input = runtimeIngest.runtime_input || {};
+      runtimeIngest.runtime_input.pending_new_members = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
       document.getElementById('runtime-ingest-input').value = JSON.stringify(runtimeIngest, null, 2);
     }
 
@@ -1472,7 +1493,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('scheduler-config-advanced-toggle').addEventListener('click', () => toggleSchedulerAdvancedMode());
-    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode'].forEach((id) => {
+    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode', 'scheduler-form-active-hours', 'scheduler-form-cooldown-seconds', 'scheduler-form-pending-threshold'].forEach((id) => {
       document.getElementById(id).addEventListener('input', () => {
         try { syncSchedulerJsonFromStructuredForm(); } catch (_) {}
       });

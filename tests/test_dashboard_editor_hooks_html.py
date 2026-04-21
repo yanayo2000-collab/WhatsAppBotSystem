@@ -40,6 +40,9 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'id="scheduler-form-bot-role"' in html
     assert 'id="scheduler-form-scenario-id"' in html
     assert 'id="scheduler-form-content-mode"' in html
+    assert 'id="scheduler-form-active-hours"' in html
+    assert 'id="scheduler-form-cooldown-seconds"' in html
+    assert 'id="scheduler-form-pending-threshold"' in html
     assert 'id="scheduler-config-advanced-toggle"' in html
     assert 'id="scheduler-config-advanced-panel"' in html
     assert 'toggleSchedulerAdvancedMode' in html
@@ -70,3 +73,6 @@ def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
     assert '欢迎机器人' in html
     assert '新人欢迎' in html
     assert '模板改写' in html
+    assert '活跃时段' in html
+    assert '冷却时间（秒）' in html
+    assert '新成员阈值' in html
