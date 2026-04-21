@@ -247,6 +247,60 @@ def create_app(
             ]
         }
 
+    @app.post('/v1/dashboard/groups/{group_id}/run-latest')
+    def dashboard_group_run_latest(group_id: str) -> dict:
+        config_record = scheduler_config_store.latest(group_id)
+        return _execute_scheduler_latest(
+            request=SchedulerExecuteLatestRequest(
+                config=config_record.config,
+                group_id=group_id,
+                candidate_context=config_record.candidate_context,
+                workflow=config_record.workflow,
+                reviewer=config_record.reviewer,
+            ),
+            runtime_ingest_store=runtime_ingest_store,
+            planner_audit_store=planner_audit_store,
+            review_service=review_service,
+            execution_service=execution_service,
+            scheduler_run_store=scheduler_run_store,
+        )
+
+    @app.post('/v1/dashboard/groups/{group_id}/disable')
+    def dashboard_group_disable(group_id: str) -> dict:
+        current = scheduler_config_store.latest(group_id)
+        record = SchedulerConfigRecord(
+            id=f'scfg_{uuid4().hex[:12]}',
+            group_id=group_id,
+            enabled=False,
+            workflow=current.workflow,
+            reviewer=current.reviewer,
+            candidate_context=current.candidate_context,
+            config=current.config,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        scheduler_config_store.save(record)
+        return _serialize_scheduler_config(record)
+
+    @app.post('/v1/dashboard/groups/{group_id}/enable')
+    def dashboard_group_enable(group_id: str) -> dict:
+        current = scheduler_config_store.latest(group_id)
+        record = SchedulerConfigRecord(
+            id=f'scfg_{uuid4().hex[:12]}',
+            group_id=group_id,
+            enabled=True,
+            workflow=current.workflow,
+            reviewer=current.reviewer,
+            candidate_context=current.candidate_context,
+            config=current.config,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        scheduler_config_store.save(record)
+        return _serialize_scheduler_config(record)
+
+    @app.post('/v1/dashboard/groups/run-tick')
+    def dashboard_group_run_tick() -> dict:
+        return execute_scheduler_tick()
+
     @app.post('/v1/scheduler/configs')
     def create_scheduler_config(request: SchedulerConfigRequest) -> dict:
         record = SchedulerConfigRecord(
@@ -885,20 +939,30 @@ def _render_dashboard_html() -> str:
       <h2>Scheduler Config Editor</h2>
       <div class="row">
         <div>
-          <label>Scheduler Config JSON</label>
-          <textarea id="scheduler-config-input"></textarea>
+          <label>Group ID</label>
+          <input id="scheduler-config-group-id" />
+          <label style="display:block;margin-top:12px;">Enabled</label>
+          <select id="scheduler-config-enabled" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+          <label style="display:block;margin-top:12px;">Workflow</label>
+          <select id="scheduler-config-workflow" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+            <option value="queue">queue</option>
+            <option value="approve">approve</option>
+            <option value="send">send</option>
+          </select>
+          <label style="display:block;margin-top:12px;">Reviewer</label>
+          <input id="scheduler-config-reviewer" />
+        </div>
+        <div>
+          <label>Candidate Context JSON</label>
+          <textarea id="scheduler-config-candidate-context"></textarea>
+          <label style="display:block;margin-top:12px;">Bot Config JSON</label>
+          <textarea id="scheduler-config-bot-config"></textarea>
           <div class="actions">
             <button id="scheduler-config-save">Save Scheduler Config</button>
           </div>
-        </div>
-        <div>
-          <label>Scheduler Group ID</label>
-          <input id="scheduler-group-id" />
-          <div class="actions">
-            <button id="scheduler-run-latest">Run Latest Ingest</button>
-            <button class="secondary" id="scheduler-tick-run">Run Batch Tick</button>
-          </div>
-          <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
         </div>
       </div>
       <h3>Recent Scheduler Configs</h3>
@@ -916,6 +980,13 @@ def _render_dashboard_html() -> str:
           </div>
         </div>
         <div>
+          <label>Scheduler Group ID</label>
+          <input id="scheduler-group-id" />
+          <div class="actions">
+            <button id="scheduler-run-latest">Run Latest Ingest</button>
+            <button class="secondary" id="scheduler-tick-run">Run Batch Tick</button>
+          </div>
+          <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
           <h3>Recent Runtime Ingests</h3>
           <div id="runtime-ingests"></div>
           <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
@@ -940,7 +1011,12 @@ def _render_dashboard_html() -> str:
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
     document.getElementById('runtime-ingest-input').value = JSON.stringify(defaultRuntimeIngest, null, 2);
-    document.getElementById('scheduler-config-input').value = JSON.stringify(defaultSchedulerConfig, null, 2);
+    document.getElementById('scheduler-config-group-id').value = defaultSchedulerConfig.group_id;
+    document.getElementById('scheduler-config-enabled').value = String(defaultSchedulerConfig.enabled);
+    document.getElementById('scheduler-config-workflow').value = defaultSchedulerConfig.workflow;
+    document.getElementById('scheduler-config-reviewer').value = defaultSchedulerConfig.reviewer;
+    document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(defaultSchedulerConfig.candidate_context, null, 2);
+    document.getElementById('scheduler-config-bot-config').value = JSON.stringify(defaultSchedulerConfig.config, null, 2);
     document.getElementById('scheduler-group-id').value = '120363001234567890@g.us';
 
     async function requestJson(url, options) {
@@ -1021,6 +1097,10 @@ def _render_dashboard_html() -> str:
           <div><span class="label">${item.config_enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
           <div class="muted" style="margin-top:8px;">latest run=${item.latest_scheduler_run?.status || '-'} · latest candidate=${item.latest_candidate?.status || '-'}</div>
           <div class="muted">ingest=${item.latest_runtime_ingest?.source || '-'} · workflow=${item.latest_scheduler_config?.workflow || '-'}</div>
+          <div class="actions">
+            <button onclick="runGroupLatest('${item.group_id}')">Run latest</button>
+            <button class="secondary" onclick="toggleGroupConfig('${item.group_id}', ${item.config_enabled ? 'false' : 'true'})">${item.config_enabled ? 'Disable' : 'Enable'}</button>
+          </div>
         </div>`).join('') : '<div class="muted">No group status yet.</div>';
     }
 
@@ -1077,11 +1157,31 @@ def _render_dashboard_html() -> str:
       await loadDashboard();
     }
 
-    async function saveSchedulerConfig() {
-      const payload = JSON.parse(document.getElementById('scheduler-config-input').value);
+    async function saveVisualSchedulerConfig() {
+      const payload = {
+        group_id: document.getElementById('scheduler-config-group-id').value,
+        enabled: document.getElementById('scheduler-config-enabled').value === 'true',
+        workflow: document.getElementById('scheduler-config-workflow').value,
+        reviewer: document.getElementById('scheduler-config-reviewer').value,
+        candidate_context: JSON.parse(document.getElementById('scheduler-config-candidate-context').value),
+        config: JSON.parse(document.getElementById('scheduler-config-bot-config').value),
+      };
       const data = await requestJson('/v1/scheduler/configs', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
       document.getElementById('scheduler-group-id').value = payload.group_id;
+      await loadDashboard();
+    }
+
+    async function runGroupLatest(groupId) {
+      const data = await requestJson(`/v1/dashboard/groups/${groupId}/run-latest`, { method: 'POST', body: JSON.stringify({}) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      await loadDashboard();
+    }
+
+    async function toggleGroupConfig(groupId, enable) {
+      const endpoint = enable ? 'enable' : 'disable';
+      const data = await requestJson(`/v1/dashboard/groups/${groupId}/${endpoint}`, { method: 'POST', body: JSON.stringify({}) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
       await loadDashboard();
     }
 
@@ -1107,7 +1207,7 @@ def _render_dashboard_html() -> str:
     document.getElementById('planner-submit').addEventListener('click', () => executePlanner().catch((error) => {
       document.getElementById('planner-result').textContent = String(error);
     }));
-    document.getElementById('scheduler-config-save').addEventListener('click', () => saveSchedulerConfig().catch((error) => {
+    document.getElementById('scheduler-config-save').addEventListener('click', () => saveVisualSchedulerConfig().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('runtime-ingest-submit').addEventListener('click', () => ingestRuntime().catch((error) => {

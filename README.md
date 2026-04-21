@@ -22,6 +22,7 @@ WhatsApp 群组多账号 AI 机器人系统 MVP 后端。
 - scheduler run log + multi-group dispatch
 - scheduler config center + batch tick
 - dashboard group status overview + config editor
+- group card action buttons + visual scheduler form
 
 ## 本地启动
 ```bash
@@ -79,6 +80,10 @@ python -m pytest -q
 - `GET /`
 - `GET /v1/dashboard/summary`
 - `GET /v1/dashboard/group-status`
+- `POST /v1/dashboard/groups/{group_id}/run-latest`
+- `POST /v1/dashboard/groups/{group_id}/enable`
+- `POST /v1/dashboard/groups/{group_id}/disable`
+- `POST /v1/dashboard/groups/run-tick`
 - 页面已展示 queue、recent candidates、attempts、planner audits、runtime ingests、scheduler runs、scheduler configs、group status cards
 
 ### Templates
