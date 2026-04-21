@@ -14,6 +14,7 @@ class DatabaseSettings:
     planner_audit_db_path: str = 'data/planner_audits.db'
     runtime_ingest_db_path: str = 'data/runtime_ingest.db'
     scheduler_run_db_path: str = 'data/scheduler_runs.db'
+    scheduler_config_db_path: str = 'data/scheduler_configs.db'
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class AppSettings:
                 planner_audit_db_path=str(database.get('planner_audit_db_path') or 'data/planner_audits.db'),
                 runtime_ingest_db_path=str(database.get('runtime_ingest_db_path') or 'data/runtime_ingest.db'),
                 scheduler_run_db_path=str(database.get('scheduler_run_db_path') or 'data/scheduler_runs.db'),
+                scheduler_config_db_path=str(database.get('scheduler_config_db_path') or 'data/scheduler_configs.db'),
             ),
             execution=ExecutionSettings(
                 default_sender=str(execution.get('default_sender') or 'mock'),

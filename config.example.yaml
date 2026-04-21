@@ -4,6 +4,7 @@ database:
   planner_audit_db_path: data/planner_audits.db
   runtime_ingest_db_path: data/runtime_ingest.db
   scheduler_run_db_path: data/scheduler_runs.db
+  scheduler_config_db_path: data/scheduler_configs.db
 
 execution:
   default_sender: mock # mock | dry_run | webhook

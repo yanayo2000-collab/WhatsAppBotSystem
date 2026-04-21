@@ -14,6 +14,7 @@ def create_app_from_settings(settings: AppSettings):
         planner_audit_db_path=settings.database.planner_audit_db_path,
         runtime_ingest_db_path=settings.database.runtime_ingest_db_path,
         scheduler_run_db_path=settings.database.scheduler_run_db_path,
+        scheduler_config_db_path=settings.database.scheduler_config_db_path,
         default_sender=settings.execution.default_sender,
         settings_templates=settings.templates,
         webhook_endpoint=settings.execution.webhook_sender.endpoint,

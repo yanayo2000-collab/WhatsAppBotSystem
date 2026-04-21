@@ -20,6 +20,7 @@ WhatsApp 群组多账号 AI 机器人系统 MVP 后端。
 - runtime file source runner
 - runtime webhook ingest + latest scheduler execution
 - scheduler run log + multi-group dispatch
+- scheduler config center + batch tick
 
 ## 本地启动
 ```bash
@@ -62,7 +63,11 @@ python -m pytest -q
 - `POST /v1/runner/runtime-file/execute`（从本地 runtime JSON 文件执行一轮 runner workflow）
 - `POST /v1/scheduler/execute-latest`（对指定 group 拉取最新 ingest runtime 并执行 workflow）
 - `POST /v1/scheduler/execute-multi`（一次调度多个 group）
+- `POST /v1/scheduler/tick`（按已启用的 scheduler configs 批量执行）
 - `GET /v1/scheduler/runs`
+- `POST /v1/scheduler/configs`
+- `GET /v1/scheduler/configs`
+- `GET /v1/scheduler/configs/latest?group_id=...`
 
 ### Runtime Ingest
 - `POST /v1/runtime/ingest`
@@ -72,7 +77,7 @@ python -m pytest -q
 ### Dashboard
 - `GET /`
 - `GET /v1/dashboard/summary`
-- 页面已展示 queue、recent candidates、attempts、planner audits、runtime ingests、scheduler runs
+- 页面已展示 queue、recent candidates、attempts、planner audits、runtime ingests、scheduler runs、scheduler configs
 
 ### Templates
 - `POST /v1/templates/render`

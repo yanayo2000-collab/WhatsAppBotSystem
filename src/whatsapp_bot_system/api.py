@@ -19,6 +19,7 @@ from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
 from whatsapp_bot_system.runtime_ingest_store_sqlite import RuntimeIngestRecord, SQLiteRuntimeIngestStore
 from whatsapp_bot_system.runtime_sources import load_runtime_input_from_file
+from whatsapp_bot_system.scheduler_config_store_sqlite import SchedulerConfigRecord, SQLiteSchedulerConfigStore
 from whatsapp_bot_system.scheduler_run_store_sqlite import SchedulerRunRecord, SQLiteSchedulerRunStore
 from whatsapp_bot_system.templates import TemplateCatalog, render_candidate_from_template
 
@@ -81,6 +82,15 @@ class SchedulerExecuteMultiRequest(BaseModel):
     items: list[SchedulerExecuteLatestRequest]
 
 
+class SchedulerConfigRequest(BaseModel):
+    group_id: str
+    enabled: bool
+    workflow: str
+    reviewer: str
+    candidate_context: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any]
+
+
 class CreateCandidateRequest(BaseModel):
     bot_id: str
     bot_display_name: str
@@ -120,6 +130,7 @@ def create_app(
     planner_audit_db_path: str | Path | None = None,
     runtime_ingest_db_path: str | Path | None = None,
     scheduler_run_db_path: str | Path | None = None,
+    scheduler_config_db_path: str | Path | None = None,
     default_sender: str = 'mock',
     settings_templates: dict[str, Any] | None = None,
     webhook_endpoint: str = '',
@@ -131,12 +142,14 @@ def create_app(
     resolved_planner_audit_db_path = ':memory:' if planner_audit_db_path is None else Path(planner_audit_db_path)
     resolved_runtime_ingest_db_path = ':memory:' if runtime_ingest_db_path is None else Path(runtime_ingest_db_path)
     resolved_scheduler_run_db_path = ':memory:' if scheduler_run_db_path is None else Path(scheduler_run_db_path)
+    resolved_scheduler_config_db_path = ':memory:' if scheduler_config_db_path is None else Path(scheduler_config_db_path)
     resolved_templates = settings_templates or {'personas': {}, 'scenarios': {}}
     store = SQLiteCandidateMessageStore(resolved_db_path)
     attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
     planner_audit_store = SQLitePlannerAuditStore(resolved_planner_audit_db_path)
     runtime_ingest_store = SQLiteRuntimeIngestStore(resolved_runtime_ingest_db_path)
     scheduler_run_store = SQLiteSchedulerRunStore(resolved_scheduler_run_db_path)
+    scheduler_config_store = SQLiteSchedulerConfigStore(resolved_scheduler_config_db_path)
     review_service = ReviewFlowService(store)
     sender_registry = SenderRegistry(
         default_sender=default_sender,
@@ -168,6 +181,7 @@ def create_app(
             'planner_audit_db_path': str(resolved_planner_audit_db_path),
             'runtime_ingest_db_path': str(resolved_runtime_ingest_db_path),
             'scheduler_run_db_path': str(resolved_scheduler_run_db_path),
+            'scheduler_config_db_path': str(resolved_scheduler_config_db_path),
             'default_sender': default_sender,
             'available_senders': sorted(sender_registry.senders.keys()),
         }
@@ -197,7 +211,35 @@ def create_app(
             'recent_planner_audits': [_serialize_planner_audit(item) for item in planner_audit_store.list(limit=10)],
             'recent_runtime_ingests': [_serialize_runtime_ingest(item) for item in runtime_ingest_store.list(limit=10)],
             'recent_scheduler_runs': [_serialize_scheduler_run(item) for item in scheduler_run_store.list(limit=10)],
+            'recent_scheduler_configs': [_serialize_scheduler_config(item) for item in scheduler_config_store.list()[-10:]],
         }
+
+    @app.post('/v1/scheduler/configs')
+    def create_scheduler_config(request: SchedulerConfigRequest) -> dict:
+        record = SchedulerConfigRecord(
+            id=f'scfg_{uuid4().hex[:12]}',
+            group_id=request.group_id,
+            enabled=request.enabled,
+            workflow=request.workflow,
+            reviewer=request.reviewer,
+            candidate_context=request.candidate_context,
+            config=request.config,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        scheduler_config_store.save(record)
+        return _serialize_scheduler_config(record)
+
+    @app.get('/v1/scheduler/configs')
+    def list_scheduler_configs() -> dict:
+        return {'items': [_serialize_scheduler_config(item) for item in scheduler_config_store.list()]}
+
+    @app.get('/v1/scheduler/configs/latest')
+    def latest_scheduler_config(group_id: str) -> dict:
+        try:
+            record = scheduler_config_store.latest(group_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f'No scheduler config found for group: {group_id}') from exc
+        return _serialize_scheduler_config(record)
 
     @app.get('/v1/scheduler/runs')
     def list_scheduler_runs() -> dict:
@@ -355,6 +397,28 @@ def create_app(
                 for item in request.items
             ]
         }
+
+    @app.post('/v1/scheduler/tick')
+    def execute_scheduler_tick() -> dict:
+        enabled_configs = [item for item in scheduler_config_store.list() if item.enabled]
+        items = [
+            _execute_scheduler_latest(
+                request=SchedulerExecuteLatestRequest(
+                    config=item.config,
+                    group_id=item.group_id,
+                    candidate_context=item.candidate_context,
+                    workflow=item.workflow,
+                    reviewer=item.reviewer,
+                ),
+                runtime_ingest_store=runtime_ingest_store,
+                planner_audit_store=planner_audit_store,
+                review_service=review_service,
+                execution_service=execution_service,
+                scheduler_run_store=scheduler_run_store,
+            )
+            for item in enabled_configs
+        ]
+        return {'items': items}
 
     @app.post('/v1/templates/render')
     def render_template(request: RenderTemplateRequest) -> dict:
@@ -666,6 +730,19 @@ def _serialize_scheduler_run(record) -> dict:
     }
 
 
+def _serialize_scheduler_config(record) -> dict:
+    return {
+        'id': record.id,
+        'group_id': record.group_id,
+        'enabled': record.enabled,
+        'workflow': record.workflow,
+        'reviewer': record.reviewer,
+        'candidate_context': record.candidate_context,
+        'config': record.config,
+        'created_at': record.created_at,
+    }
+
+
 def _render_dashboard_html() -> str:
     return """
 <!doctype html>
@@ -766,6 +843,7 @@ def _render_dashboard_html() -> str:
           <input id="scheduler-group-id" />
           <div class="actions">
             <button id="scheduler-run-latest">Run Latest Ingest</button>
+            <button class="secondary" id="scheduler-tick-run">Run Batch Tick</button>
           </div>
           <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
         </div>
@@ -774,6 +852,8 @@ def _render_dashboard_html() -> str:
       <div id="runtime-ingests"></div>
       <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
       <div id="scheduler-runs"></div>
+      <h3 style="margin-top:16px;">Recent Scheduler Configs</h3>
+      <div id="scheduler-configs"></div>
     </section>
   </div>
 
@@ -857,6 +937,14 @@ def _render_dashboard_html() -> str:
         </div>`).join('') : '<div class="muted">No scheduler runs yet.</div>';
     }
 
+    function renderSchedulerConfigs(items) {
+      document.getElementById('scheduler-configs').innerHTML = items.length ? items.map((item) => `
+        <div class="item">
+          <div><span class="label">${item.enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">workflow=${item.workflow} · reviewer=${item.reviewer}</div>
+        </div>`).join('') : '<div class="muted">No scheduler configs yet.</div>';
+    }
+
     async function loadDashboard() {
       const data = await requestJson('/v1/dashboard/summary');
       document.getElementById('health').textContent = `Health: ${data.health.status} · default sender=${data.health.default_sender} · senders=${data.health.available_senders.join(', ')}`;
@@ -866,6 +954,7 @@ def _render_dashboard_html() -> str:
       renderPlannerAudits(data.recent_planner_audits || []);
       renderRuntimeIngests(data.recent_runtime_ingests || []);
       renderSchedulerRuns(data.recent_scheduler_runs || []);
+      renderSchedulerConfigs(data.recent_scheduler_configs || []);
     }
 
     async function approveCandidate(id) {
@@ -918,6 +1007,12 @@ def _render_dashboard_html() -> str:
       await loadDashboard();
     }
 
+    async function runSchedulerTick() {
+      const data = await requestJson('/v1/scheduler/tick', { method: 'POST', body: JSON.stringify({}) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      await loadDashboard();
+    }
+
     document.getElementById('planner-submit').addEventListener('click', () => executePlanner().catch((error) => {
       document.getElementById('planner-result').textContent = String(error);
     }));
@@ -925,6 +1020,9 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('scheduler-run-latest').addEventListener('click', () => runSchedulerLatest().catch((error) => {
+      document.getElementById('scheduler-result').textContent = String(error);
+    }));
+    document.getElementById('scheduler-tick-run').addEventListener('click', () => runSchedulerTick().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('planner-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
