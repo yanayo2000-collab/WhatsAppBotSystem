@@ -67,6 +67,6 @@ def test_dashboard_html_contains_group_status_and_config_editor_hooks(tmp_path):
     response = client.get('/')
 
     assert response.status_code == 200
-    assert 'Group Status Overview' in response.text
+    assert '群组状态总览' in response.text
     assert '/v1/dashboard/group-status' in response.text
     assert 'scheduler-config-editor' in response.text

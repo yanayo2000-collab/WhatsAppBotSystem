@@ -77,7 +77,7 @@ def test_dashboard_html_page_is_served():
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
-    assert 'WhatsApp Bot System Dashboard' in response.text
+    assert 'WhatsApp 机器人系统后台' in response.text
     assert '/v1/dashboard/summary' in response.text
 
 
