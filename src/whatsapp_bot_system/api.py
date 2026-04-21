@@ -223,7 +223,7 @@ def create_app(
         }
 
     @app.get('/v1/dashboard/group-status')
-    def dashboard_group_status() -> dict:
+    def dashboard_group_status(enabled_only: bool = False, sort_by: str = 'group_id_asc') -> dict:
         config_map = {item.group_id: item for item in scheduler_config_store.list()}
         ingest_map = {item.group_id: item for item in runtime_ingest_store.list()}
         run_map = {item.group_id: item for item in scheduler_run_store.list()}
@@ -233,19 +233,26 @@ def create_app(
             if group_id and group_id not in candidate_map:
                 candidate_map[group_id] = item
         group_ids = sorted(set(config_map) | set(ingest_map) | set(run_map) | set(candidate_map))
-        return {
-            'items': [
-                {
-                    'group_id': group_id,
-                    'config_enabled': config_map[group_id].enabled if group_id in config_map else False,
-                    'latest_scheduler_config': None if group_id not in config_map else _serialize_scheduler_config(config_map[group_id]),
-                    'latest_runtime_ingest': None if group_id not in ingest_map else _serialize_runtime_ingest(ingest_map[group_id]),
-                    'latest_scheduler_run': None if group_id not in run_map else _serialize_scheduler_run(run_map[group_id]),
-                    'latest_candidate': None if group_id not in candidate_map else _serialize_candidate(candidate_map[group_id]),
-                }
-                for group_id in group_ids
-            ]
-        }
+        items = [
+            {
+                'group_id': group_id,
+                'config_enabled': config_map[group_id].enabled if group_id in config_map else False,
+                'latest_scheduler_config': None if group_id not in config_map else _serialize_scheduler_config(config_map[group_id]),
+                'latest_runtime_ingest': None if group_id not in ingest_map else _serialize_runtime_ingest(ingest_map[group_id]),
+                'latest_scheduler_run': None if group_id not in run_map else _serialize_scheduler_run(run_map[group_id]),
+                'latest_candidate': None if group_id not in candidate_map else _serialize_candidate(candidate_map[group_id]),
+            }
+            for group_id in group_ids
+        ]
+        if enabled_only:
+            items = [item for item in items if item['config_enabled']]
+        if sort_by == 'latest_scheduler_run_desc':
+            items.sort(key=lambda item: (item['latest_scheduler_run'] or {}).get('created_at', ''), reverse=True)
+        elif sort_by == 'latest_scheduler_run_asc':
+            items.sort(key=lambda item: (item['latest_scheduler_run'] or {}).get('created_at', ''))
+        else:
+            items.sort(key=lambda item: item['group_id'])
+        return {'items': items}
 
     @app.post('/v1/dashboard/groups/{group_id}/run-latest')
     def dashboard_group_run_latest(group_id: str) -> dict:
@@ -932,6 +939,17 @@ def _render_dashboard_html() -> str:
 
     <section class="panel">
       <h2>Group Status Overview</h2>
+      <div class="actions">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <input id="group-status-filter-enabled" type="checkbox" />
+          <span class="muted">Enabled only</span>
+        </label>
+        <select id="group-status-sort" style="width:auto;min-width:220px;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+          <option value="group_id_asc">Sort: Group ID</option>
+          <option value="latest_scheduler_run_desc">Sort: Latest run newest first</option>
+          <option value="latest_scheduler_run_asc">Sort: Latest run oldest first</option>
+        </select>
+      </div>
       <div id="group-status-cards"></div>
     </section>
 
@@ -962,6 +980,7 @@ def _render_dashboard_html() -> str:
           <textarea id="scheduler-config-bot-config"></textarea>
           <div class="actions">
             <button id="scheduler-config-save">Save Scheduler Config</button>
+            <button class="secondary" id="scheduler-config-update">Update Existing Config</button>
           </div>
         </div>
       </div>
@@ -1088,6 +1107,9 @@ def _render_dashboard_html() -> str:
         <div class="item">
           <div><span class="label">${item.enabled ? 'enabled' : 'disabled'}</span> ${item.group_id}</div>
           <div class="muted" style="margin-top:8px;">workflow=${item.workflow} · reviewer=${item.reviewer}</div>
+          <div class="actions">
+            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">Edit config</button>
+          </div>
         </div>`).join('') : '<div class="muted">No scheduler configs yet.</div>';
     }
 
@@ -1099,15 +1121,22 @@ def _render_dashboard_html() -> str:
           <div class="muted">ingest=${item.latest_runtime_ingest?.source || '-'} · workflow=${item.latest_scheduler_config?.workflow || '-'}</div>
           <div class="actions">
             <button onclick="runGroupLatest('${item.group_id}')">Run latest</button>
+            <button onclick="loadGroupConfigIntoForm('${item.group_id}')">Edit</button>
             <button class="secondary" onclick="toggleGroupConfig('${item.group_id}', ${item.config_enabled ? 'false' : 'true'})">${item.config_enabled ? 'Disable' : 'Enable'}</button>
           </div>
         </div>`).join('') : '<div class="muted">No group status yet.</div>';
     }
 
+    async function applyGroupStatusFilters() {
+      const enabledOnly = document.getElementById('group-status-filter-enabled').checked;
+      const sortBy = document.getElementById('group-status-sort').value;
+      return requestJson(`/v1/dashboard/group-status?enabled_only=${enabledOnly}&sort_by=${encodeURIComponent(sortBy)}`);
+    }
+
     async function loadDashboard() {
       const [summary, groupStatus] = await Promise.all([
         requestJson('/v1/dashboard/summary'),
-        requestJson('/v1/dashboard/group-status'),
+        applyGroupStatusFilters(),
       ]);
       document.getElementById('health').textContent = `Health: ${summary.health.status} · default sender=${summary.health.default_sender} · senders=${summary.health.available_senders.join(', ')}`;
       renderQueue(summary.queue);
@@ -1172,6 +1201,33 @@ def _render_dashboard_html() -> str:
       await loadDashboard();
     }
 
+    async function updateExistingSchedulerConfig() {
+      const groupId = document.getElementById('scheduler-config-group-id').value;
+      const payload = {
+        enabled: document.getElementById('scheduler-config-enabled').value === 'true',
+        workflow: document.getElementById('scheduler-config-workflow').value,
+        reviewer: document.getElementById('scheduler-config-reviewer').value,
+        candidate_context: JSON.parse(document.getElementById('scheduler-config-candidate-context').value),
+        config: JSON.parse(document.getElementById('scheduler-config-bot-config').value),
+      };
+      const data = await requestJson(`/v1/scheduler/configs/${groupId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('scheduler-group-id').value = groupId;
+      await loadDashboard();
+    }
+
+    async function loadGroupConfigIntoForm(groupId) {
+      const data = await requestJson(`/v1/scheduler/configs/latest?group_id=${encodeURIComponent(groupId)}`);
+      document.getElementById('scheduler-config-group-id').value = data.group_id;
+      document.getElementById('scheduler-config-enabled').value = String(data.enabled);
+      document.getElementById('scheduler-config-workflow').value = data.workflow;
+      document.getElementById('scheduler-config-reviewer').value = data.reviewer;
+      document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(data.candidate_context || {}, null, 2);
+      document.getElementById('scheduler-config-bot-config').value = JSON.stringify(data.config || {}, null, 2);
+      document.getElementById('scheduler-group-id').value = data.group_id;
+      document.getElementById('scheduler-result').textContent = `Loaded config for ${data.group_id}`;
+    }
+
     async function runGroupLatest(groupId) {
       const data = await requestJson(`/v1/dashboard/groups/${groupId}/run-latest`, { method: 'POST', body: JSON.stringify({}) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
@@ -1210,6 +1266,12 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-save').addEventListener('click', () => saveVisualSchedulerConfig().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
+    document.getElementById('scheduler-config-update').addEventListener('click', () => updateExistingSchedulerConfig().catch((error) => {
+      document.getElementById('scheduler-result').textContent = String(error);
+    }));
+    document.getElementById('scheduler-config-group-id').addEventListener('change', () => loadGroupConfigIntoForm(document.getElementById('scheduler-config-group-id').value).catch(() => {}));
+    document.getElementById('group-status-filter-enabled').addEventListener('change', () => loadDashboard().catch(console.error));
+    document.getElementById('group-status-sort').addEventListener('change', () => loadDashboard().catch(console.error));
     document.getElementById('runtime-ingest-submit').addEventListener('click', () => ingestRuntime().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
