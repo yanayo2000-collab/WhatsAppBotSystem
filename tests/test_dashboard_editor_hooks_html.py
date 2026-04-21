@@ -37,9 +37,14 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'id="scheduler-form-rules-summary"' in html
     assert 'id="scheduler-form-provider"' in html
     assert 'id="scheduler-form-bot-display-name"' in html
+    assert 'id="scheduler-form-bot-role"' in html
     assert 'id="scheduler-form-scenario-id"' in html
+    assert 'id="scheduler-form-content-mode"' in html
     assert 'syncSchedulerJsonFromStructuredForm' in html
     assert 'updateStructuredSchedulerForm' in html
+    assert 'formatRoleLabel' in html
+    assert 'formatScenarioLabel' in html
+    assert 'formatContentModeLabel' in html
 
 
 def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
@@ -59,3 +64,6 @@ def test_dashboard_html_uses_chinese_labels_for_main_sections(tmp_path):
     assert '请先查看群公告。' in html
     assert '桥接服务A' in html
     assert '后台调度' in html
+    assert '欢迎机器人' in html
+    assert '新人欢迎' in html
+    assert '模板改写' in html

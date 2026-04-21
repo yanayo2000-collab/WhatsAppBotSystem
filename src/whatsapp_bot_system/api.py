@@ -1002,9 +1002,24 @@ def _render_dashboard_html() -> str:
             <label>机器人昵称</label>
             <input id="scheduler-form-bot-display-name" />
             <label style="display:block;margin-top:12px;">机器人角色</label>
-            <input id="scheduler-form-bot-role" />
+            <select id="scheduler-form-bot-role" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+              <option value="welcomer">欢迎机器人</option>
+              <option value="starter">话题机器人</option>
+              <option value="supporter">陪聊机器人</option>
+            </select>
             <label style="display:block;margin-top:12px;">场景 ID</label>
-            <input id="scheduler-form-scenario-id" />
+            <select id="scheduler-form-scenario-id" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+              <option value="welcome">新人欢迎</option>
+              <option value="cold_start">冷场救场</option>
+              <option value="event_preheat">活动预热</option>
+              <option value="manual_review">人工审核</option>
+            </select>
+            <label style="display:block;margin-top:12px;">内容模式</label>
+            <select id="scheduler-form-content-mode" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+              <option value="template_rewrite">模板改写</option>
+              <option value="fixed_copy">固定话术</option>
+              <option value="ai_generate">AI 生成</option>
+            </select>
           </div>
         </div>
       </div>
@@ -1106,8 +1121,9 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-rules-summary').value = candidateContext.rules_summary || '';
       document.getElementById('scheduler-form-provider').value = ((JSON.parse(document.getElementById('runtime-ingest-input').value || '{}').metadata) || {}).provider || '';
       document.getElementById('scheduler-form-bot-display-name').value = firstBot.display_name || '';
-      document.getElementById('scheduler-form-bot-role').value = firstBot.role || '';
-      document.getElementById('scheduler-form-scenario-id').value = firstScenario.id || '';
+      document.getElementById('scheduler-form-bot-role').value = firstBot.role || 'welcomer';
+      document.getElementById('scheduler-form-scenario-id').value = firstScenario.id || 'welcome';
+      document.getElementById('scheduler-form-content-mode').value = firstScenario.content_mode || (Array.isArray(firstBot.content_modes) && firstBot.content_modes[0]) || 'template_rewrite';
     }
 
     function syncSchedulerJsonFromStructuredForm() {
@@ -1125,7 +1141,10 @@ def _render_dashboard_html() -> str:
       }
       config.bots[0].display_name = document.getElementById('scheduler-form-bot-display-name').value.trim();
       config.bots[0].role = document.getElementById('scheduler-form-bot-role').value.trim();
+      config.bots[0].content_modes = [document.getElementById('scheduler-form-content-mode').value];
       config.scenarios[0].id = document.getElementById('scheduler-form-scenario-id').value.trim();
+      config.scenarios[0].bot_roles = [document.getElementById('scheduler-form-bot-role').value.trim()];
+      config.scenarios[0].content_mode = document.getElementById('scheduler-form-content-mode').value;
       document.getElementById('scheduler-config-bot-config').value = JSON.stringify(config, null, 2);
 
       const runtimeIngest = JSON.parse(document.getElementById('runtime-ingest-input').value || '{}');
@@ -1172,6 +1191,34 @@ def _render_dashboard_html() -> str:
         send: '直接发送',
       };
       return labels[workflow] || workflow || '-';
+    }
+
+    function formatRoleLabel(role) {
+      const labels = {
+        welcomer: '欢迎机器人',
+        starter: '话题机器人',
+        supporter: '陪聊机器人',
+      };
+      return labels[role] || role || '-';
+    }
+
+    function formatScenarioLabel(scenario) {
+      const labels = {
+        welcome: '新人欢迎',
+        cold_start: '冷场救场',
+        event_preheat: '活动预热',
+        manual_review: '人工审核',
+      };
+      return labels[scenario] || scenario || '-';
+    }
+
+    function formatContentModeLabel(mode) {
+      const labels = {
+        template_rewrite: '模板改写',
+        fixed_copy: '固定话术',
+        ai_generate: 'AI 生成',
+      };
+      return labels[mode] || mode || '-';
     }
 
     function formatSenderLabel(sender) {
@@ -1412,7 +1459,7 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-update').addEventListener('click', () => updateExistingSchedulerConfig().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
-    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id'].forEach((id) => {
+    ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode'].forEach((id) => {
       document.getElementById(id).addEventListener('input', () => {
         try { syncSchedulerJsonFromStructuredForm(); } catch (_) {}
       });
