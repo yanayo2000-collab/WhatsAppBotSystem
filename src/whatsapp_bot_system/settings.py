@@ -12,6 +12,7 @@ class DatabaseSettings:
     review_db_path: str = 'data/review_flow.db'
     execution_db_path: str = 'data/execution_attempts.db'
     planner_audit_db_path: str = 'data/planner_audits.db'
+    runtime_ingest_db_path: str = 'data/runtime_ingest.db'
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class AppSettings:
                 review_db_path=str(database.get('review_db_path') or 'data/review_flow.db'),
                 execution_db_path=str(database.get('execution_db_path') or 'data/execution_attempts.db'),
                 planner_audit_db_path=str(database.get('planner_audit_db_path') or 'data/planner_audits.db'),
+                runtime_ingest_db_path=str(database.get('runtime_ingest_db_path') or 'data/runtime_ingest.db'),
             ),
             execution=ExecutionSettings(
                 default_sender=str(execution.get('default_sender') or 'mock'),

@@ -17,6 +17,7 @@ from whatsapp_bot_system.planner_audit_store_sqlite import PlannerAuditRecord, S
 from whatsapp_bot_system.review_flow import ReviewFlowService
 from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
+from whatsapp_bot_system.runtime_ingest_store_sqlite import RuntimeIngestRecord, SQLiteRuntimeIngestStore
 from whatsapp_bot_system.runtime_sources import load_runtime_input_from_file
 from whatsapp_bot_system.templates import TemplateCatalog, render_candidate_from_template
 
@@ -60,6 +61,21 @@ class RunnerRuntimeFileExecuteRequest(BaseModel):
     reviewer: str = 'ops-runner'
 
 
+class RuntimeIngestRequest(BaseModel):
+    source: str
+    group_id: str
+    runtime_input: dict[str, Any]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SchedulerExecuteLatestRequest(BaseModel):
+    config: dict
+    group_id: str
+    candidate_context: dict[str, Any] = Field(default_factory=dict)
+    workflow: str = 'queue'
+    reviewer: str = 'ops-runner'
+
+
 class CreateCandidateRequest(BaseModel):
     bot_id: str
     bot_display_name: str
@@ -97,6 +113,7 @@ def create_app(
     db_path: str | Path | None = None,
     execution_db_path: str | Path | None = None,
     planner_audit_db_path: str | Path | None = None,
+    runtime_ingest_db_path: str | Path | None = None,
     default_sender: str = 'mock',
     settings_templates: dict[str, Any] | None = None,
     webhook_endpoint: str = '',
@@ -106,10 +123,12 @@ def create_app(
     resolved_db_path = ':memory:' if db_path is None else Path(db_path)
     resolved_execution_db_path = ':memory:' if execution_db_path is None else Path(execution_db_path)
     resolved_planner_audit_db_path = ':memory:' if planner_audit_db_path is None else Path(planner_audit_db_path)
+    resolved_runtime_ingest_db_path = ':memory:' if runtime_ingest_db_path is None else Path(runtime_ingest_db_path)
     resolved_templates = settings_templates or {'personas': {}, 'scenarios': {}}
     store = SQLiteCandidateMessageStore(resolved_db_path)
     attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
     planner_audit_store = SQLitePlannerAuditStore(resolved_planner_audit_db_path)
+    runtime_ingest_store = SQLiteRuntimeIngestStore(resolved_runtime_ingest_db_path)
     review_service = ReviewFlowService(store)
     sender_registry = SenderRegistry(
         default_sender=default_sender,
@@ -138,6 +157,8 @@ def create_app(
             'status': 'ok',
             'review_db_path': str(resolved_db_path),
             'execution_db_path': str(resolved_execution_db_path),
+            'planner_audit_db_path': str(resolved_planner_audit_db_path),
+            'runtime_ingest_db_path': str(resolved_runtime_ingest_db_path),
             'default_sender': default_sender,
             'available_senders': sorted(sender_registry.senders.keys()),
         }
@@ -165,7 +186,33 @@ def create_app(
             'recent_candidates': [_serialize_candidate(item) for item in recent_candidates],
             'recent_attempts': [_serialize_attempt(item) for item in attempts[:10]],
             'recent_planner_audits': [_serialize_planner_audit(item) for item in planner_audit_store.list(limit=10)],
+            'recent_runtime_ingests': [_serialize_runtime_ingest(item) for item in runtime_ingest_store.list(limit=10)],
         }
+
+    @app.post('/v1/runtime/ingest')
+    def ingest_runtime(request: RuntimeIngestRequest) -> dict:
+        record = RuntimeIngestRecord(
+            id=f'ingest_{uuid4().hex[:12]}',
+            source=request.source,
+            group_id=request.group_id,
+            runtime_input=request.runtime_input,
+            metadata=request.metadata,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        runtime_ingest_store.save(record)
+        return _serialize_runtime_ingest(record)
+
+    @app.get('/v1/runtime/ingest')
+    def list_runtime_ingests(group_id: str | None = None) -> dict:
+        return {'items': [_serialize_runtime_ingest(item) for item in runtime_ingest_store.list(group_id=group_id)]}
+
+    @app.get('/v1/runtime/ingest/latest')
+    def latest_runtime_ingest(group_id: str) -> dict:
+        try:
+            record = runtime_ingest_store.latest(group_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f'No runtime ingest found for group: {group_id}') from exc
+        return _serialize_runtime_ingest(record)
 
     @app.get('/v1/planner/audits')
     def list_planner_audits() -> dict:
@@ -271,6 +318,54 @@ def create_app(
             },
             'candidate': _serialize_candidate(record),
             'runtime_source': {'type': 'file', 'path': request.runtime_file_path},
+            'planner_audit': _serialize_planner_audit(audit),
+        }
+
+    @app.post('/v1/scheduler/execute-latest')
+    def execute_scheduler_latest(request: SchedulerExecuteLatestRequest) -> dict:
+        try:
+            ingest = runtime_ingest_store.latest(request.group_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f'No runtime ingest found for group: {request.group_id}') from exc
+        execution, audit = _plan_candidate_execution(
+            PlannerExecuteRequest(
+                config=request.config,
+                runtime_input=ingest.runtime_input,
+                candidate_context=request.candidate_context,
+                submit_for_review=True,
+                workflow=request.workflow,
+                reviewer=request.reviewer,
+            )
+        )
+        planner_audit_store.save(audit)
+        if execution is None:
+            return {
+                'matched': False,
+                'candidate': None,
+                'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
+                'planner_audit': _serialize_planner_audit(audit),
+            }
+        plan, candidate = execution
+        record = review_service.create_candidate(
+            bot_id=plan.bot_id,
+            bot_display_name=candidate.bot_display_name,
+            scenario_id=plan.scenario_id,
+            content_mode=plan.content_mode,
+            text=candidate.text,
+            context=request.candidate_context,
+        )
+        record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=True, review_service=review_service, execution_service=execution_service)
+        return {
+            'matched': True,
+            'plan': {
+                'scenario_id': plan.scenario_id,
+                'bot_id': plan.bot_id,
+                'content_mode': plan.content_mode,
+                'trigger': plan.trigger,
+                'reason': plan.reason,
+            },
+            'candidate': _serialize_candidate(record),
+            'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
             'planner_audit': _serialize_planner_audit(audit),
         }
 
@@ -482,6 +577,17 @@ def _serialize_planner_audit(record) -> dict:
     }
 
 
+def _serialize_runtime_ingest(record) -> dict:
+    return {
+        'id': record.id,
+        'source': record.source,
+        'group_id': record.group_id,
+        'runtime_input': record.runtime_input,
+        'metadata': record.metadata,
+        'created_at': record.created_at,
+    }
+
+
 def _render_dashboard_html() -> str:
     return """
 <!doctype html>
@@ -566,6 +672,29 @@ def _render_dashboard_html() -> str:
       <h2>Recent Planner Audits</h2>
       <div id="planner-audits"></div>
     </section>
+
+    <section class="panel">
+      <h2>Runtime Webhook / Scheduler</h2>
+      <div class="row">
+        <div>
+          <label>Runtime Ingest JSON</label>
+          <textarea id="runtime-ingest-input"></textarea>
+          <div class="actions">
+            <button id="runtime-ingest-submit">Ingest Runtime</button>
+          </div>
+        </div>
+        <div>
+          <label>Scheduler Group ID</label>
+          <input id="scheduler-group-id" />
+          <div class="actions">
+            <button id="scheduler-run-latest">Run Latest Ingest</button>
+          </div>
+          <pre id="scheduler-result" class="item muted">No scheduler execution yet.</pre>
+        </div>
+      </div>
+      <h3>Recent Runtime Ingests</h3>
+      <div id="runtime-ingests"></div>
+    </section>
   </div>
 
   <script>
@@ -577,9 +706,12 @@ def _render_dashboard_html() -> str:
     };
     const defaultRuntime = { group_id: '120363001234567890@g.us', now: '2026-04-21T12:00:00+00:00', pending_new_members: 1, messages: [] };
     const defaultContext = { group_name: 'Moms Club', rules_summary: 'Please read the pinned guide.', pending_new_members: 1 };
+    const defaultRuntimeIngest = { source: 'webhook', group_id: '120363001234567890@g.us', runtime_input: defaultRuntime, metadata: { provider: 'bridge-a' } };
     document.getElementById('planner-config').value = JSON.stringify(defaultConfig, null, 2);
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
+    document.getElementById('runtime-ingest-input').value = JSON.stringify(defaultRuntimeIngest, null, 2);
+    document.getElementById('scheduler-group-id').value = '120363001234567890@g.us';
 
     async function requestJson(url, options) {
       const response = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -627,6 +759,15 @@ def _render_dashboard_html() -> str:
         </div>`).join('') : '<div class="muted">No planner audits yet.</div>';
     }
 
+    function renderRuntimeIngests(items) {
+      document.getElementById('runtime-ingests').innerHTML = items.length ? items.map((item) => `
+        <div class="item">
+          <div><span class="label">${item.source}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">pending_new_members=${item.runtime_input.pending_new_members ?? 0}</div>
+          <div class="muted">provider=${item.metadata.provider || '-'}</div>
+        </div>`).join('') : '<div class="muted">No runtime ingests yet.</div>';
+    }
+
     async function loadDashboard() {
       const data = await requestJson('/v1/dashboard/summary');
       document.getElementById('health').textContent = `Health: ${data.health.status} · default sender=${data.health.default_sender} · senders=${data.health.available_senders.join(', ')}`;
@@ -634,6 +775,7 @@ def _render_dashboard_html() -> str:
       renderCandidates(data.recent_candidates);
       renderAttempts(data.recent_attempts);
       renderPlannerAudits(data.recent_planner_audits || []);
+      renderRuntimeIngests(data.recent_runtime_ingests || []);
     }
 
     async function approveCandidate(id) {
@@ -666,8 +808,34 @@ def _render_dashboard_html() -> str:
       await loadDashboard();
     }
 
+    async function ingestRuntime() {
+      const payload = JSON.parse(document.getElementById('runtime-ingest-input').value);
+      const data = await requestJson('/v1/runtime/ingest', { method: 'POST', body: JSON.stringify(payload) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      await loadDashboard();
+    }
+
+    async function runSchedulerLatest() {
+      const payload = {
+        config: JSON.parse(document.getElementById('planner-config').value),
+        group_id: document.getElementById('scheduler-group-id').value,
+        candidate_context: JSON.parse(document.getElementById('planner-context').value),
+        workflow: document.getElementById('planner-workflow').value,
+        reviewer: 'dashboard-scheduler',
+      };
+      const data = await requestJson('/v1/scheduler/execute-latest', { method: 'POST', body: JSON.stringify(payload) });
+      document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
+      await loadDashboard();
+    }
+
     document.getElementById('planner-submit').addEventListener('click', () => executePlanner().catch((error) => {
       document.getElementById('planner-result').textContent = String(error);
+    }));
+    document.getElementById('runtime-ingest-submit').addEventListener('click', () => ingestRuntime().catch((error) => {
+      document.getElementById('scheduler-result').textContent = String(error);
+    }));
+    document.getElementById('scheduler-run-latest').addEventListener('click', () => runSchedulerLatest().catch((error) => {
+      document.getElementById('scheduler-result').textContent = String(error);
     }));
     document.getElementById('planner-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
     loadDashboard().catch((error) => {
