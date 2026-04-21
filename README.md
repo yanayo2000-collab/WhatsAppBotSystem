@@ -15,6 +15,7 @@ WhatsApp 群组多账号 AI 机器人系统 MVP 后端。
 - FastAPI 接口
 - 内置前端运营控制台（首页 Dashboard）
 - 前端可调用的一键 planner 执行入口
+- queue / approve / send 三档闭环 workflow
 
 ## 本地启动
 ```bash
@@ -52,7 +53,7 @@ python -m pytest -q
 
 ### Planner
 - `POST /v1/planner/dry-run`
-- `POST /v1/ops/planner/execute`（生成 candidate，并可直接进入 pending_review）
+- `POST /v1/ops/planner/execute`（支持 `queue` / `approve` / `send` workflow，可生成 candidate、自动审批、自动发送）
 
 ### Dashboard
 - `GET /`

@@ -115,3 +115,42 @@ def test_ops_planner_execute_creates_review_candidate_from_runtime_input(tmp_pat
     listed = client.get('/v1/review/candidates', params={'status': 'pending_review'})
     assert listed.status_code == 200
     assert [item['id'] for item in listed.json()['items']] == [body['candidate']['id']]
+
+
+
+def test_ops_planner_execute_send_mode_runs_full_review_and_send_cycle(tmp_path):
+    app = create_app(db_path=tmp_path / 'review.db', execution_db_path=tmp_path / 'execution.db', default_sender='dry_run')
+    client = TestClient(app)
+
+    response = client.post(
+        '/v1/ops/planner/execute',
+        json={
+            'config': BASE_CONFIG,
+            'runtime_input': {
+                'group_id': '120363001234567890@g.us',
+                'now': '2026-04-21T12:00:00+00:00',
+                'pending_new_members': 1,
+                'messages': [],
+            },
+            'candidate_context': {
+                'group_name': 'Moms Club',
+                'rules_summary': 'Please read the pinned guide.',
+                'pending_new_members': 1,
+            },
+            'submit_for_review': True,
+            'workflow': 'send',
+            'reviewer': 'ops-runner',
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['matched'] is True
+    assert body['candidate']['status'] == 'sent'
+    assert body['candidate']['reviewed_by'] == 'ops-runner'
+    assert body['candidate']['outbound_message_id'].startswith('dryrun-msg-')
+
+    attempts = client.get(f"/v1/execution/candidates/{body['candidate']['id']}/attempts")
+    assert attempts.status_code == 200
+    assert len(attempts.json()['items']) == 1
+    assert attempts.json()['items'][0]['status'] == 'sent'

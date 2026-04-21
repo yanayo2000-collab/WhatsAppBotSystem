@@ -45,6 +45,8 @@ class PlannerDryRunRequest(BaseModel):
 
 class PlannerExecuteRequest(PlannerDryRunRequest):
     submit_for_review: bool = True
+    workflow: str = 'queue'
+    reviewer: str = 'ops-runner'
 
 
 class CreateCandidateRequest(BaseModel):
@@ -192,6 +194,15 @@ def create_app(
         )
         if request.submit_for_review:
             record = review_service.submit_for_review(record.id)
+        if request.workflow == 'approve':
+            record = review_service.approve(record.id, reviewer=request.reviewer)
+        elif request.workflow == 'send':
+            if record.status != 'pending_review':
+                record = review_service.submit_for_review(record.id)
+            record = review_service.approve(record.id, reviewer=request.reviewer)
+            record = execution_service.send_candidate(record.id)
+        elif request.workflow != 'queue':
+            raise HTTPException(status_code=400, detail=f'Unsupported workflow: {request.workflow}')
         return {
             'matched': True,
             'plan': {
@@ -419,8 +430,14 @@ def _render_dashboard_html() -> str:
         <div>
           <label>Candidate Context JSON</label>
           <textarea id="planner-context"></textarea>
+          <label style="display:block;margin-top:12px;">Workflow</label>
+          <select id="planner-workflow" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+            <option value="queue">queue → pending_review</option>
+            <option value="approve">queue → approved</option>
+            <option value="send">queue → approved → send</option>
+          </select>
           <div class="actions">
-            <button id="planner-submit">Generate Candidate</button>
+            <button id="planner-submit">Run Planner Workflow</button>
             <button class="secondary" id="planner-refresh">Refresh Dashboard</button>
           </div>
           <pre id="planner-result" class="item muted">No execution yet.</pre>
@@ -514,11 +531,14 @@ def _render_dashboard_html() -> str:
     }
 
     async function executePlanner() {
+      const workflow = document.getElementById('planner-workflow').value;
       const payload = {
         config: JSON.parse(document.getElementById('planner-config').value),
         runtime_input: JSON.parse(document.getElementById('planner-runtime').value),
         candidate_context: JSON.parse(document.getElementById('planner-context').value),
         submit_for_review: true,
+        workflow,
+        reviewer: 'dashboard-ui',
       };
       const data = await requestJson('/v1/ops/planner/execute', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('planner-result').textContent = JSON.stringify(data, null, 2);
