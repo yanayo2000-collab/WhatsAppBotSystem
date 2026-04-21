@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -8,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
 from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
-from whatsapp_bot_system.review_flow import CandidateMessageStore, ReviewFlowService
+from whatsapp_bot_system.review_flow import ReviewFlowService
+from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
 
 
@@ -59,16 +61,15 @@ class MarkFailedRequest(BaseModel):
     error: str
 
 
-_store = CandidateMessageStore()
-_review_service = ReviewFlowService(_store)
-
-
-def create_app() -> FastAPI:
+def create_app(db_path: str | Path | None = None) -> FastAPI:
+    resolved_db_path = Path(db_path) if db_path is not None else Path('data/review_flow.db')
+    store = SQLiteCandidateMessageStore(resolved_db_path)
+    review_service = ReviewFlowService(store)
     app = FastAPI(title='WhatsApp Bot System', version='0.1.0')
 
     @app.get('/health')
     def health() -> dict:
-        return {'status': 'ok'}
+        return {'status': 'ok', 'review_db_path': str(resolved_db_path)}
 
     @app.post('/v1/planner/dry-run')
     def planner_dry_run(request: PlannerDryRunRequest) -> dict:
@@ -104,7 +105,7 @@ def create_app() -> FastAPI:
 
     @app.post('/v1/review/candidates')
     def create_candidate(request: CreateCandidateRequest) -> dict:
-        record = _review_service.create_candidate(
+        record = review_service.create_candidate(
             bot_id=request.bot_id,
             bot_display_name=request.bot_display_name,
             scenario_id=request.scenario_id,
@@ -117,23 +118,23 @@ def create_app() -> FastAPI:
     @app.get('/v1/review/candidates')
     def list_candidates(status: str | None = None) -> dict:
         try:
-            items = _review_service.list_candidates(status=status)
+            items = review_service.list_candidates(status=status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {'items': [_serialize_candidate(item) for item in items]}
 
     @app.post('/v1/review/candidates/{candidate_id}/submit')
     def submit_candidate(candidate_id: str) -> dict:
-        return _apply_transition(lambda: _review_service.submit_for_review(candidate_id))
+        return _apply_transition(lambda: review_service.submit_for_review(candidate_id))
 
     @app.post('/v1/review/candidates/{candidate_id}/approve')
     def approve_candidate(candidate_id: str, request: ReviewDecisionRequest) -> dict:
-        return _apply_transition(lambda: _review_service.approve(candidate_id, reviewer=request.reviewer))
+        return _apply_transition(lambda: review_service.approve(candidate_id, reviewer=request.reviewer))
 
     @app.post('/v1/review/candidates/{candidate_id}/reject')
     def reject_candidate(candidate_id: str, request: ReviewDecisionRequest) -> dict:
         return _apply_transition(
-            lambda: _review_service.reject(
+            lambda: review_service.reject(
                 candidate_id,
                 reviewer=request.reviewer,
                 reason=request.reason or 'rejected',
@@ -142,11 +143,11 @@ def create_app() -> FastAPI:
 
     @app.post('/v1/review/candidates/{candidate_id}/sent')
     def mark_candidate_sent(candidate_id: str, request: MarkSentRequest) -> dict:
-        return _apply_transition(lambda: _review_service.mark_sent(candidate_id, outbound_message_id=request.outbound_message_id))
+        return _apply_transition(lambda: review_service.mark_sent(candidate_id, outbound_message_id=request.outbound_message_id))
 
     @app.post('/v1/review/candidates/{candidate_id}/failed')
     def mark_candidate_failed(candidate_id: str, request: MarkFailedRequest) -> dict:
-        return _apply_transition(lambda: _review_service.mark_failed(candidate_id, error=request.error))
+        return _apply_transition(lambda: review_service.mark_failed(candidate_id, error=request.error))
 
     return app
 
