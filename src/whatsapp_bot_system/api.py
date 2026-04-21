@@ -909,6 +909,22 @@ def _render_dashboard_html() -> str:
     .muted { color: #6b7280; font-size: 14px; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .label { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; }
+    .scheduler-summary-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .scheduler-summary-chip { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #eef2ff; color: #1e3a8a; font-size: 12px; border: 1px solid #bfdbfe; }
+    .scheduler-summary-chip.warning { background: #fffbeb; color: #92400e; border-color: #fcd34d; }
+    .scheduler-summary-chip.danger { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+    .scheduler-summary-chip.success { background: #ecfdf5; color: #166534; border-color: #86efac; }
+    .scheduler-editor-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.9fr); gap: 16px; align-items: start; }
+    .scheduler-editor-side { position: sticky; top: 16px; align-self: start; }
+    .scheduler-dirty-banner { display: none; border: 1px solid #fcd34d; background: #fffbeb; color: #92400e; border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+    .scheduler-recommend-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .scheduler-recommend-actions button { background: #e0f2fe; color: #075985; }
+    .scheduler-risk-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .scheduler-risk-badge { display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 12px; border: 1px solid #fcd34d; }
+    .scheduler-risk-badge.is-safe { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .scheduler-status-tone-success { background: #ecfdf5 !important; border-color: #86efac !important; }
+    .scheduler-status-tone-warning { background: #fffbeb !important; border-color: #fcd34d !important; }
+    .scheduler-status-tone-danger { background: #fef2f2 !important; border-color: #fca5a5 !important; }
     @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -989,62 +1005,118 @@ def _render_dashboard_html() -> str:
       <h2>调度配置编辑</h2>
       <div class="item" style="margin-bottom:16px;background:#f8fafc;">
         <div style="font-weight:600;margin-bottom:10px;">中文辅助表单</div>
-        <div class="row">
-          <div>
-            <label>群名称</label>
-            <input id="scheduler-form-group-name" />
-            <label style="display:block;margin-top:12px;">群公告摘要</label>
-            <textarea id="scheduler-form-rules-summary"></textarea>
-            <label style="display:block;margin-top:12px;">采集提供方</label>
-            <input id="scheduler-form-provider" />
-          </div>
-          <div>
-            <label>机器人昵称</label>
-            <input id="scheduler-form-bot-display-name" />
-            <label style="display:block;margin-top:12px;">机器人角色</label>
-            <select id="scheduler-form-bot-role" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-              <option value="welcomer">欢迎机器人</option>
-              <option value="starter">话题机器人</option>
-              <option value="supporter">陪聊机器人</option>
-            </select>
-            <label style="display:block;margin-top:12px;">场景 ID</label>
-            <select id="scheduler-form-scenario-id" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-              <option value="welcome">新人欢迎</option>
-              <option value="cold_start">冷场救场</option>
-              <option value="event_preheat">活动预热</option>
-              <option value="manual_review">人工审核</option>
-            </select>
-            <label style="display:block;margin-top:12px;">内容模式</label>
-            <select id="scheduler-form-content-mode" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
-              <option value="template_rewrite">模板改写</option>
-              <option value="fixed_copy">固定话术</option>
-              <option value="ai_generate">AI 生成</option>
-            </select>
-            <label style="display:block;margin-top:12px;">活跃时段</label>
-            <div class="actions">
-              <div style="flex:1;min-width:0;">
-                <label class="muted" style="display:block;margin-bottom:6px;">开始时间</label>
-                <input id="scheduler-form-active-start" type="time" value="08:00" />
+        <div id="scheduler-form-dirty-banner" class="scheduler-dirty-banner">当前存在未保存修改，建议先保存再离开当前配置。</div>
+        <div id="scheduler-editor-layout" class="scheduler-editor-layout">
+          <div id="scheduler-editor-main">
+            <div class="row">
+              <div>
+                <label>群名称</label>
+                <input id="scheduler-form-group-name" />
+                <label style="display:block;margin-top:12px;">群公告摘要</label>
+                <textarea id="scheduler-form-rules-summary"></textarea>
+                <label style="display:block;margin-top:12px;">采集提供方</label>
+                <input id="scheduler-form-provider" />
               </div>
-              <div style="flex:1;min-width:0;">
-                <label class="muted" style="display:block;margin-bottom:6px;">结束时间</label>
-                <input id="scheduler-form-active-end" type="time" value="22:00" />
+              <div>
+                <label>机器人昵称</label>
+                <input id="scheduler-form-bot-display-name" />
+                <label style="display:block;margin-top:12px;">机器人角色</label>
+                <select id="scheduler-form-bot-role" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+                  <option value="welcomer">欢迎机器人</option>
+                  <option value="starter">话题机器人</option>
+                  <option value="supporter">陪聊机器人</option>
+                </select>
+                <label style="display:block;margin-top:12px;">场景 ID</label>
+                <select id="scheduler-form-scenario-id" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+                  <option value="welcome">新人欢迎</option>
+                  <option value="cold_start">冷场救场</option>
+                  <option value="event_preheat">活动预热</option>
+                  <option value="manual_review">人工审核</option>
+                </select>
+                <label style="display:block;margin-top:12px;">内容模式</label>
+                <select id="scheduler-form-content-mode" style="width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font:inherit;">
+                  <option value="template_rewrite">模板改写</option>
+                  <option value="fixed_copy">固定话术</option>
+                  <option value="ai_generate">AI 生成</option>
+                </select>
+                <label style="display:block;margin-top:12px;">活跃时段</label>
+                <div class="actions">
+                  <div style="flex:1;min-width:0;">
+                    <label class="muted" style="display:block;margin-bottom:6px;">开始时间</label>
+                    <input id="scheduler-form-active-start" type="time" value="08:00" />
+                  </div>
+                  <div style="flex:1;min-width:0;">
+                    <label class="muted" style="display:block;margin-bottom:6px;">结束时间</label>
+                    <input id="scheduler-form-active-end" type="time" value="22:00" />
+                  </div>
+                </div>
+                <div class="scheduler-recommend-actions">
+                  <button type="button" class="secondary" id="scheduler-form-recommend-window">一键建议：活跃时段 08:00-22:00</button>
+                </div>
+                <label style="display:block;margin-top:12px;">冷却时间（秒）</label>
+                <input id="scheduler-form-cooldown-seconds" type="number" min="0" />
+                <div id="scheduler-form-cooldown-minutes-hint" class="muted" style="margin-top:6px;">约 10.0 分钟</div>
+                <div id="scheduler-form-cooldown-action-hint" class="muted" style="margin-top:6px;">建议将冷却时间提高到 ≥ 300 秒，降低打扰感。</div>
+                <div class="scheduler-recommend-actions">
+                  <button type="button" class="secondary" id="scheduler-form-recommend-cooldown">一键建议：冷却 300 秒</button>
+                </div>
+                <label style="display:block;margin-top:12px;">新成员阈值</label>
+                <input id="scheduler-form-pending-threshold" type="number" min="0" />
+                <div id="scheduler-form-pending-threshold-hint" class="muted" style="margin-top:6px;">达到该人数时，优先触发欢迎场景</div>
+                <div id="scheduler-form-pending-threshold-action-hint" class="muted" style="margin-top:6px;">欢迎场景建议把阈值控制在 1-10 人，保证首轮欢迎及时触发。</div>
+                <div class="scheduler-recommend-actions">
+                  <button type="button" class="secondary" id="scheduler-form-recommend-threshold">一键建议：欢迎阈值 3 人</button>
+                  <button type="button" class="secondary">一键建议：冷场阈值 0 人</button>
+                  <button type="button" class="secondary">一键建议：预热时段 18:00-22:00</button>
+                </div>
+                <div class="item" style="margin-top:12px;background:#f8fafc;border-color:#e5e7eb;">
+                  <div style="font-weight:600;margin-bottom:6px;">字段即时提示</div>
+                  <div id="scheduler-form-field-tip" class="muted">当前是欢迎场景，建议优先控制冷却时间和阈值，保证第一轮欢迎及时发出。</div>
+                </div>
               </div>
             </div>
-            <label style="display:block;margin-top:12px;">冷却时间（秒）</label>
-            <input id="scheduler-form-cooldown-seconds" type="number" min="0" />
-            <div id="scheduler-form-cooldown-minutes-hint" class="muted" style="margin-top:6px;">约 10.0 分钟</div>
-            <label style="display:block;margin-top:12px;">新成员阈值</label>
-            <input id="scheduler-form-pending-threshold" type="number" min="0" />
-            <div id="scheduler-form-pending-threshold-hint" class="muted" style="margin-top:6px;">达到该人数时，优先触发欢迎场景</div>
           </div>
+          <div id="scheduler-editor-side" class="scheduler-editor-side"></div>
         </div>
       </div>
       <div id="scheduler-toast" class="item" style="display:none;margin-top:12px;border-color:#bbf7d0;background:#f0fdf4;color:#166534;">保存成功</div>
-      <div id="scheduler-preview-card" class="item" style="margin-top:12px;background:#fff7ed;border-color:#fed7aa;">
-        <div style="font-weight:600;margin-bottom:8px;">候选文案预览</div>
-        <div class="muted" id="scheduler-preview-meta">角色 / 场景 / 内容模式</div>
-        <div id="scheduler-preview-copy" style="margin-top:10px;line-height:1.7;">预估文案</div>
+      <div id="scheduler-editor-side-content">
+        <div class="item" style="margin-top:12px;background:#f8fafc;border-color:#dbeafe;">
+          <div style="font-weight:600;margin-bottom:8px;">配置摘要</div>
+          <div id="scheduler-summary-chips" class="scheduler-summary-chips">
+            <span id="scheduler-summary-chip-enabled" class="scheduler-summary-chip success">已启用</span>
+            <span id="scheduler-summary-chip-sync" class="scheduler-summary-chip warning">已同步未保存</span>
+            <span id="scheduler-summary-chip-risk" class="scheduler-summary-chip warning">中风险</span>
+            <span id="scheduler-summary-chip-workflow" class="scheduler-summary-chip">直接发送</span>
+            <span class="scheduler-summary-chip danger">未保存修改</span>
+            <span class="scheduler-summary-chip success">已保存最新</span>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px;">
+          <div id="scheduler-preview-card" class="item" style="margin-top:0;background:#fff7ed;border-color:#fed7aa;">
+            <div style="font-weight:600;margin-bottom:8px;">候选文案预览</div>
+            <div class="muted" id="scheduler-preview-meta">角色 / 场景 / 内容模式</div>
+            <div class="muted" id="scheduler-preview-persona" style="margin-top:8px;">人设摘要：欢迎机器人 · 语气轻松稳定 · 提供方=桥接服务A</div>
+            <div class="muted" id="scheduler-preview-trigger" style="margin-top:8px;">场景触发条件：当新成员达到阈值时，优先触发欢迎流程</div>
+            <div class="muted" id="scheduler-preview-risk" style="margin-top:8px;">风险提示：当前配置节奏稳定，可直接用于联调。点击风险项可直接修复。</div>
+            <div id="scheduler-preview-risk-list" class="scheduler-risk-list">
+              <span class="scheduler-risk-badge">冷却时间低于 3 分钟，可能导致发言过密。</span>
+              <span class="scheduler-risk-badge">欢迎场景阈值超过 10 人，可能错过第一轮欢迎。</span>
+              <span class="scheduler-risk-badge is-safe">当前配置节奏稳定，可直接用于联调。</span>
+            </div>
+            <div id="scheduler-preview-copy" style="margin-top:10px;line-height:1.7;">预估文案</div>
+          </div>
+          <div id="scheduler-config-status-card" class="item scheduler-status-tone-success" style="margin-top:0;background:#eff6ff;border-color:#bfdbfe;">
+            <div style="font-weight:600;margin-bottom:8px;">当前配置状态</div>
+            <div class="muted" id="scheduler-config-status-enabled">启用状态：已启用</div>
+            <div class="muted" id="scheduler-config-status-group-enabled" style="margin-top:8px;">当前群是否启用：是</div>
+            <div class="muted" id="scheduler-config-status-risk-level" style="margin-top:8px;">风险等级：中风险</div>
+            <div class="muted" id="scheduler-config-status-advice" style="margin-top:8px;">当前建议：建议先处理风险项，再进入自动调度。</div>
+            <div class="muted" id="scheduler-config-status-workflow" style="margin-top:8px;">当前工作流：直接发送</div>
+            <div class="muted" id="scheduler-config-status-sync" style="margin-top:8px;">同步状态：当前配置已同步，可直接进入调度。</div>
+            <div class="muted" id="scheduler-config-status-saved-at" style="margin-top:8px;">最近保存时间：未保存</div>
+          </div>
+        </div>
       </div>
       <div class="actions" style="margin:12px 0 0;">
         <button class="secondary" id="scheduler-config-advanced-toggle">显示高级模式（JSON）</button>
@@ -1120,6 +1192,9 @@ def _render_dashboard_html() -> str:
     const defaultContext = { group_name: '妈妈成长群', rules_summary: '请先查看群公告。', pending_new_members: 1 };
     const defaultRuntimeIngest = { source: 'webhook', group_id: '120363001234567890@g.us', runtime_input: defaultRuntime, metadata: { provider: '桥接服务A' } };
     const defaultSchedulerConfig = { group_id: '120363001234567890@g.us', enabled: true, workflow: 'send', reviewer: '后台调度', candidate_context: defaultContext, config: defaultConfig };
+    let schedulerConfigSavedAtLabel = '未保存';
+    let schedulerToastTimer = null;
+    let schedulerFormDirty = false;
     document.getElementById('planner-config').value = JSON.stringify(defaultConfig, null, 2);
     document.getElementById('planner-runtime').value = JSON.stringify(defaultRuntime, null, 2);
     document.getElementById('planner-context').value = JSON.stringify(defaultContext, null, 2);
@@ -1131,6 +1206,93 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(defaultSchedulerConfig.candidate_context, null, 2);
     document.getElementById('scheduler-config-bot-config').value = JSON.stringify(defaultSchedulerConfig.config, null, 2);
     document.getElementById('scheduler-group-id').value = '120363001234567890@g.us';
+
+    function markSchedulerFormDirty() {
+      schedulerFormDirty = true;
+      const banner = document.getElementById('scheduler-form-dirty-banner');
+      banner.style.display = 'block';
+    }
+
+    function clearSchedulerFormDirty() {
+      schedulerFormDirty = false;
+      const banner = document.getElementById('scheduler-form-dirty-banner');
+      banner.style.display = 'none';
+    }
+
+    function getScenarioRecommendations(scenario) {
+      const presets = {
+        welcome: { cooldown: 300, threshold: 3, windowStart: '08:00', windowEnd: '22:00', thresholdLabel: '一键建议：欢迎阈值 3 人', windowLabel: '一键建议：活跃时段 08:00-22:00' },
+        cold_start: { cooldown: 900, threshold: 0, windowStart: '10:00', windowEnd: '23:00', thresholdLabel: '一键建议：冷场阈值 0 人', windowLabel: '一键建议：冷场时段 10:00-23:00' },
+        event_preheat: { cooldown: 600, threshold: 1, windowStart: '18:00', windowEnd: '22:00', thresholdLabel: '一键建议：预热阈值 1 人', windowLabel: '一键建议：预热时段 18:00-22:00' },
+        manual_review: { cooldown: 1200, threshold: 1, windowStart: '09:00', windowEnd: '21:00', thresholdLabel: '一键建议：审核阈值 1 人', windowLabel: '一键建议：审核时段 09:00-21:00' },
+      };
+      return presets[scenario] || presets.welcome;
+    }
+
+    function renderScenarioRecommendationButtons(scenario) {
+      const preset = getScenarioRecommendations(scenario);
+      document.getElementById('scheduler-form-recommend-cooldown').textContent = `一键建议：冷却 ${preset.cooldown} 秒`;
+      document.getElementById('scheduler-form-recommend-threshold').textContent = preset.thresholdLabel;
+      document.getElementById('scheduler-form-recommend-window').textContent = preset.windowLabel;
+    }
+
+    function applyRecommendedCooldown() {
+      const preset = getScenarioRecommendations(document.getElementById('scheduler-form-scenario-id').value);
+      document.getElementById('scheduler-form-cooldown-seconds').value = preset.cooldown;
+      syncSchedulerJsonFromStructuredForm();
+      markSchedulerFormDirty();
+    }
+
+    function applyRecommendedThreshold() {
+      const preset = getScenarioRecommendations(document.getElementById('scheduler-form-scenario-id').value);
+      document.getElementById('scheduler-form-pending-threshold').value = preset.threshold;
+      syncSchedulerJsonFromStructuredForm();
+      markSchedulerFormDirty();
+    }
+
+    function applyRecommendedWindow() {
+      const preset = getScenarioRecommendations(document.getElementById('scheduler-form-scenario-id').value);
+      document.getElementById('scheduler-form-active-start').value = preset.windowStart;
+      document.getElementById('scheduler-form-active-end').value = preset.windowEnd;
+      syncSchedulerJsonFromStructuredForm();
+      markSchedulerFormDirty();
+    }
+
+    function applySchedulerRecommendations() {
+      document.getElementById('scheduler-form-recommend-cooldown').addEventListener('click', applyRecommendedCooldown);
+      document.getElementById('scheduler-form-recommend-threshold').addEventListener('click', applyRecommendedThreshold);
+      document.getElementById('scheduler-form-recommend-window').addEventListener('click', applyRecommendedWindow);
+      document.getElementById('scheduler-form-scenario-id').addEventListener('change', () => {
+        renderScenarioRecommendationButtons(document.getElementById('scheduler-form-scenario-id').value);
+      });
+      [
+        'scheduler-form-group-name',
+        'scheduler-form-rules-summary',
+        'scheduler-form-provider',
+        'scheduler-form-bot-display-name',
+        'scheduler-form-bot-role',
+        'scheduler-form-scenario-id',
+        'scheduler-form-content-mode',
+        'scheduler-form-active-start',
+        'scheduler-form-active-end',
+        'scheduler-form-cooldown-seconds',
+        'scheduler-form-pending-threshold',
+        'scheduler-config-enabled',
+        'scheduler-config-workflow'
+      ].forEach((id) => {
+        const element = document.getElementById(id);
+        element.addEventListener('input', markSchedulerFormDirty);
+        element.addEventListener('change', markSchedulerFormDirty);
+      });
+    }
+
+    function mountSchedulerEditorSide() {
+      const side = document.getElementById('scheduler-editor-side');
+      const sideContent = document.getElementById('scheduler-editor-side-content');
+      if (side && sideContent && !side.hasChildNodes()) {
+        side.appendChild(sideContent);
+      }
+    }
 
     function updateStructuredSchedulerForm() {
       let candidateContext = {};
@@ -1155,7 +1317,9 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-form-cooldown-seconds').value = firstBot.cooldown_seconds ?? 0;
       document.getElementById('scheduler-form-cooldown-minutes-hint').textContent = `约 ${((Number(firstBot.cooldown_seconds ?? 0)) / 60).toFixed(1)} 分钟`;
       document.getElementById('scheduler-form-pending-threshold').value = candidateContext.pending_new_members ?? 0;
+      renderScenarioRecommendationButtons(document.getElementById('scheduler-form-scenario-id').value);
       renderSchedulerPreviewCard();
+      renderSchedulerConfigStatusCard();
     }
 
     function formatHourToTimeInput(hour) {
@@ -1211,8 +1375,12 @@ def _render_dashboard_html() -> str:
       runtimeIngest.runtime_input.pending_new_members = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
       document.getElementById('runtime-ingest-input').value = JSON.stringify(runtimeIngest, null, 2);
       renderSchedulerPreviewCard();
+      renderSchedulerConfigStatusCard('已同步到 JSON，可继续保存或更新现有配置。');
+      clearSchedulerFormDirty();
     }
 
+    applySchedulerRecommendations();
+    mountSchedulerEditorSide();
     updateStructuredSchedulerForm();
 
     function toggleSchedulerAdvancedMode(forceOpen = null) {
@@ -1289,14 +1457,196 @@ def _render_dashboard_html() -> str:
       return labels[mode] || mode || '-';
     }
 
+    function describeScenarioTrigger(scenario, pendingThreshold) {
+      if (scenario === 'welcome') {
+        return pendingThreshold > 0
+          ? `当新成员达到 ${pendingThreshold} 人时，优先触发欢迎流程。`
+          : '检测到新成员进入群组时，立即触发欢迎流程。';
+      }
+      if (scenario === 'cold_start') {
+        return '当群内近期发言偏少、需要重新带起讨论时触发。';
+      }
+      if (scenario === 'event_preheat') {
+        return '在活动开始前的活跃时段内触发，用于提前预热。';
+      }
+      if (scenario === 'manual_review') {
+        return '命中人工审核场景后先产出候选文案，待人工确认再继续。';
+      }
+      return '按当前策略条件触发。';
+    }
+
+    function calculateActiveHoursDuration(startValue, endValue) {
+      const startHour = Number(String(startValue || '08:00').split(':')[0]);
+      const endHour = Number(String(endValue || '22:00').split(':')[0]);
+      if (!Number.isFinite(startHour) || !Number.isFinite(endHour)) {
+        return 0;
+      }
+      const duration = (endHour - startHour + 24) % 24;
+      return duration === 0 ? 24 : duration;
+    }
+
+    function buildSchedulerRiskTips(cooldownSeconds, startValue, endValue, workflow, enabled, scenario, pendingThreshold) {
+      const tips = [];
+      const activeHoursDuration = calculateActiveHoursDuration(startValue, endValue);
+      if (!enabled) {
+        tips.push('当前群处于未启用状态，保存后也不会自动执行。');
+      }
+      if (cooldownSeconds > 0 && cooldownSeconds < 180) {
+        tips.push('冷却时间低于 3 分钟，可能导致发言过密。');
+      }
+      if (workflow === 'send' && cooldownSeconds > 0 && cooldownSeconds < 300) {
+        tips.push('当前为直接发送工作流，建议适当拉长冷却时间降低打扰感。');
+      }
+      if (scenario === 'welcome' && pendingThreshold > 10) {
+        tips.push('欢迎场景阈值超过 10 人，可能错过第一轮欢迎。');
+      }
+      if (activeHoursDuration >= 16) {
+        tips.push(`活跃时段长达 ${activeHoursDuration} 小时，建议确认是否需要覆盖全天。`);
+      }
+      if (scenario === 'event_preheat' && activeHoursDuration < 2) {
+        tips.push('活动预热时段少于 2 小时，可能来不及完成预热。');
+      }
+      return sortSchedulerRiskTips(tips);
+    }
+
+    function sortSchedulerRiskTips(riskTips) {
+      const priorityMap = {
+        '当前群处于未启用状态，保存后也不会自动执行。': 1,
+        '冷却时间低于 3 分钟，可能导致发言过密。': 2,
+        '当前为直接发送工作流，建议适当拉长冷却时间降低打扰感。': 3,
+        '欢迎场景阈值超过 10 人，可能错过第一轮欢迎。': 4,
+        '活跃时段长达 24 小时，建议确认是否需要覆盖全天。': 5,
+        '活动预热时段少于 2 小时，可能来不及完成预热。': 6,
+      };
+      return [...riskTips].sort((a, b) => (priorityMap[a] || 99) - (priorityMap[b] || 99));
+    }
+
+    function formatSchedulerRiskLevel(riskTips, enabled) {
+      if (!enabled) {
+        return '高风险';
+      }
+      if (riskTips.length >= 3) {
+        return '高风险';
+      }
+      if (riskTips.length >= 1) {
+        return '中风险';
+      }
+      return '低风险';
+    }
+
+    function formatSchedulerSyncState(syncLabel, isDirty) {
+      if (isDirty) {
+        return '未保存修改';
+      }
+      if (String(syncLabel || '').includes('已同步到 JSON')) {
+        return '已同步未保存';
+      }
+      return '已保存最新';
+    }
+
+    function renderSchedulerSummaryChips(enabled, workflow, syncLabel, riskLevel) {
+      const enabledChip = document.getElementById('scheduler-summary-chip-enabled');
+      const syncChip = document.getElementById('scheduler-summary-chip-sync');
+      const riskChip = document.getElementById('scheduler-summary-chip-risk');
+      const workflowChip = document.getElementById('scheduler-summary-chip-workflow');
+      const syncState = formatSchedulerSyncState(syncLabel, schedulerFormDirty);
+      enabledChip.textContent = enabled ? '已启用' : '未启用';
+      enabledChip.className = `scheduler-summary-chip ${enabled ? 'success' : 'danger'}`;
+      syncChip.textContent = syncState;
+      syncChip.className = `scheduler-summary-chip ${syncState === '已保存最新' ? 'success' : syncState === '已同步未保存' ? 'warning' : 'danger'}`;
+      riskChip.textContent = riskLevel;
+      riskChip.className = `scheduler-summary-chip ${riskLevel === '高风险' ? 'danger' : riskLevel === '中风险' ? 'warning' : 'success'}`;
+      workflowChip.textContent = formatWorkflowLabel(workflow);
+      workflowChip.className = 'scheduler-summary-chip';
+    }
+
+    function applyRiskFix(tip) {
+      if (tip.includes('冷却时间低于 3 分钟') || tip.includes('直接发送工作流')) {
+        applyRecommendedCooldown();
+        return;
+      }
+      if (tip.includes('欢迎场景阈值超过 10 人')) {
+        applyRecommendedThreshold();
+        return;
+      }
+      if (tip.includes('活跃时段长达') || tip.includes('活动预热时段少于 2 小时')) {
+        applyRecommendedWindow();
+        return;
+      }
+      if (tip.includes('未启用状态')) {
+        document.getElementById('scheduler-config-enabled').value = 'true';
+        syncSchedulerJsonFromStructuredForm();
+        markSchedulerFormDirty();
+      }
+    }
+
+    function renderSchedulerRiskList(riskTips) {
+      const container = document.getElementById('scheduler-preview-risk-list');
+      if (!riskTips.length) {
+        container.innerHTML = '<span class="scheduler-risk-badge is-safe">当前配置节奏稳定，可直接用于联调。</span>';
+        return;
+      }
+      container.innerHTML = riskTips.map((tip) => `<button type="button" class="scheduler-risk-badge" onclick="applyRiskFix(${JSON.stringify(tip)})">${tip}</button>`).join('');
+    }
+
+    function buildSchedulerActionHints(riskTips, scenario, workflow) {
+      const hints = {
+        fieldTip: '当前配置稳定，可直接进入自动调度。',
+        cooldownHint: '当前冷却时间节奏合适，可继续保持。',
+        thresholdHint: '当前阈值设置合理，适合及时触发欢迎。',
+      };
+      if (scenario === 'welcome') {
+        hints.fieldTip = '当前是欢迎场景，建议优先控制冷却时间和阈值，保证第一轮欢迎及时发出。';
+      } else if (scenario === 'event_preheat') {
+        hints.fieldTip = '当前是活动预热场景，建议优先保证活跃时段覆盖活动前关键窗口。';
+      } else if (scenario === 'cold_start') {
+        hints.fieldTip = '当前是冷场救场场景，建议优先关注冷却时间，避免连续打断群聊节奏。';
+      }
+      if (riskTips.some((tip) => tip.includes('冷却时间低于 3 分钟'))) {
+        hints.cooldownHint = '建议将冷却时间提高到 ≥ 300 秒，降低打扰感。';
+      }
+      if (workflow === 'send') {
+        hints.cooldownHint = '直接发送模式建议将冷却时间提高到 ≥ 300 秒，降低打扰感。';
+      }
+      if (riskTips.some((tip) => tip.includes('欢迎场景阈值超过 10 人'))) {
+        hints.thresholdHint = '欢迎场景建议把阈值控制在 1-10 人，保证首轮欢迎及时触发。';
+      }
+      return hints;
+    }
+
+    function renderSchedulerFieldHints(riskTips, scenario, workflow) {
+      const hints = buildSchedulerActionHints(riskTips, scenario, workflow);
+      document.getElementById('scheduler-form-field-tip').textContent = hints.fieldTip;
+      document.getElementById('scheduler-form-cooldown-action-hint').textContent = hints.cooldownHint;
+      document.getElementById('scheduler-form-pending-threshold-action-hint').textContent = hints.thresholdHint;
+    }
+
+    function renderSchedulerPreviewInsights(role, scenario, provider, pendingThreshold, cooldownSeconds, startValue, endValue) {
+      const enabled = document.getElementById('scheduler-config-enabled').value === 'true';
+      const workflow = document.getElementById('scheduler-config-workflow').value;
+      const personaText = `人设摘要：${formatRoleLabel(role)} · 语气轻松稳定 · 提供方=${provider || '未设置'}`;
+      const triggerText = `场景触发条件：${describeScenarioTrigger(scenario, pendingThreshold)}`;
+      const riskTips = buildSchedulerRiskTips(cooldownSeconds, startValue, endValue, workflow, enabled, scenario, pendingThreshold);
+      const riskText = riskTips.length ? `风险提示：${riskTips.join('；')}` : '风险提示：当前配置节奏稳定，可直接用于联调。';
+      document.getElementById('scheduler-preview-persona').textContent = personaText;
+      document.getElementById('scheduler-preview-trigger').textContent = triggerText;
+      document.getElementById('scheduler-preview-risk').textContent = riskText;
+      renderSchedulerRiskList(riskTips);
+      renderSchedulerFieldHints(riskTips, scenario, workflow);
+    }
+
     function renderSchedulerPreviewCard() {
       const groupName = document.getElementById('scheduler-form-group-name').value.trim() || '当前群组';
       const role = document.getElementById('scheduler-form-bot-role').value;
       const scenario = document.getElementById('scheduler-form-scenario-id').value;
       const contentMode = document.getElementById('scheduler-form-content-mode').value;
+      const provider = document.getElementById('scheduler-form-provider').value.trim();
       const botName = document.getElementById('scheduler-form-bot-display-name').value.trim() || '机器人';
       const rulesSummary = document.getElementById('scheduler-form-rules-summary').value.trim() || '请先查看群公告。';
       const pendingThreshold = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
+      const cooldownSeconds = Number(document.getElementById('scheduler-form-cooldown-seconds').value || 0);
+      const activeStart = document.getElementById('scheduler-form-active-start').value;
+      const activeEnd = document.getElementById('scheduler-form-active-end').value;
       const meta = `角色：${formatRoleLabel(role)} · 场景：${formatScenarioLabel(scenario)} · 内容模式：${formatContentModeLabel(contentMode)}`;
       let copy = `${groupName}的朋友们好，我是${botName}，${rulesSummary}`;
       if (scenario === 'welcome') {
@@ -1310,12 +1660,93 @@ def _render_dashboard_html() -> str:
       }
       document.getElementById('scheduler-preview-meta').textContent = meta;
       document.getElementById('scheduler-preview-copy').textContent = copy;
+      renderSchedulerPreviewInsights(role, scenario, provider, pendingThreshold, cooldownSeconds, activeStart, activeEnd);
+    }
+
+    function applySchedulerStatusTone(riskTips, enabled) {
+      const card = document.getElementById('scheduler-config-status-card');
+      card.classList.remove('scheduler-status-tone-success', 'scheduler-status-tone-warning', 'scheduler-status-tone-danger');
+      if (!enabled) {
+        card.classList.add('scheduler-status-tone-danger');
+        return;
+      }
+      if (riskTips.length) {
+        card.classList.add('scheduler-status-tone-warning');
+        return;
+      }
+      card.classList.add('scheduler-status-tone-success');
+    }
+
+    function formatSchedulerSavedAtLabel(value) {
+      if (!value || value === '未保存') {
+        return '未保存';
+      }
+      if (value === '刚刚保存' || value === '已存在配置') {
+        return value;
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return value;
+      }
+      const now = new Date();
+      const diffMs = now.getTime() - parsed.getTime();
+      if (diffMs < 60 * 1000) {
+        return '刚刚保存';
+      }
+      if (diffMs < 60 * 60 * 1000) {
+        return `${Math.max(1, Math.floor(diffMs / (60 * 1000)))} 分钟前`;
+      }
+      const sameDay = now.getFullYear() === parsed.getFullYear()
+        && now.getMonth() === parsed.getMonth()
+        && now.getDate() === parsed.getDate();
+      const timeLabel = `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`;
+      if (sameDay) {
+        return `今天 ${timeLabel}`;
+      }
+      return `${parsed.getMonth() + 1}-${parsed.getDate()} ${timeLabel}`;
+    }
+
+    function renderSchedulerConfigStatusCard(syncLabel = '当前配置已同步，可直接进入调度。') {
+      const enabled = document.getElementById('scheduler-config-enabled').value === 'true';
+      const workflow = document.getElementById('scheduler-config-workflow').value;
+      const scenario = document.getElementById('scheduler-form-scenario-id').value;
+      const pendingThreshold = Number(document.getElementById('scheduler-form-pending-threshold').value || 0);
+      const cooldownSeconds = Number(document.getElementById('scheduler-form-cooldown-seconds').value || 0);
+      const activeStart = document.getElementById('scheduler-form-active-start').value;
+      const activeEnd = document.getElementById('scheduler-form-active-end').value;
+      const riskTips = buildSchedulerRiskTips(cooldownSeconds, activeStart, activeEnd, workflow, enabled, scenario, pendingThreshold);
+      const riskLevel = formatSchedulerRiskLevel(riskTips, enabled);
+      const advice = !enabled
+        ? '请先启用当前群，再进入自动调度。'
+        : riskTips.length
+          ? '建议先处理风险项，再进入自动调度。'
+          : '当前配置稳定，可直接进入自动调度。';
+      applySchedulerStatusTone(riskTips, enabled);
+      renderSchedulerSummaryChips(enabled, workflow, syncLabel, riskLevel);
+      document.getElementById('scheduler-config-status-enabled').textContent = `启用状态：${enabled ? '已启用' : '未启用'}`;
+      document.getElementById('scheduler-config-status-group-enabled').textContent = `当前群是否启用：${enabled ? '是' : '否'}`;
+      document.getElementById('scheduler-config-status-risk-level').textContent = `风险等级：${riskLevel}`;
+      document.getElementById('scheduler-config-status-advice').textContent = `当前建议：${advice}`;
+      document.getElementById('scheduler-config-status-workflow').textContent = `当前工作流：${formatWorkflowLabel(workflow)}`;
+      document.getElementById('scheduler-config-status-sync').textContent = `同步状态：${syncLabel}`;
+      document.getElementById('scheduler-config-status-saved-at').textContent = `最近保存时间：${formatSchedulerSavedAtLabel(schedulerConfigSavedAtLabel)}`;
+    }
+
+    function hideSchedulerToast() {
+      const toast = document.getElementById('scheduler-toast');
+      toast.style.display = 'none';
     }
 
     function showSchedulerToast(message) {
       const toast = document.getElementById('scheduler-toast');
       toast.textContent = message;
       toast.style.display = 'block';
+      if (schedulerToastTimer) {
+        clearTimeout(schedulerToastTimer);
+      }
+      schedulerToastTimer = setTimeout(() => {
+        hideSchedulerToast();
+      }, 2200);
     }
 
     function formatSenderLabel(sender) {
@@ -1482,7 +1913,10 @@ def _render_dashboard_html() -> str:
       };
       const data = await requestJson('/v1/scheduler/configs', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
-      showSchedulerToast(`保存成功：${payload.group_id}`);
+      schedulerConfigSavedAtLabel = data.created_at || '刚刚保存';
+      renderSchedulerConfigStatusCard('当前配置已同步，可直接进入调度。');
+      clearSchedulerFormDirty();
+      showSchedulerToast(`保存成功：已新建 ${payload.group_id}`);
       document.getElementById('scheduler-group-id').value = payload.group_id;
       await loadDashboard();
     }
@@ -1499,7 +1933,10 @@ def _render_dashboard_html() -> str:
       };
       const data = await requestJson(`/v1/scheduler/configs/${groupId}`, { method: 'PUT', body: JSON.stringify(payload) });
       document.getElementById('scheduler-result').textContent = JSON.stringify(data, null, 2);
-      showSchedulerToast(`保存成功：${groupId}`);
+      schedulerConfigSavedAtLabel = data.created_at || '刚刚保存';
+      renderSchedulerConfigStatusCard('当前配置已同步，可直接进入调度。');
+      clearSchedulerFormDirty();
+      showSchedulerToast(`更新成功：已同步现有配置 ${groupId}`);
       document.getElementById('scheduler-group-id').value = groupId;
       await loadDashboard();
     }
@@ -1513,7 +1950,10 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-config-candidate-context').value = JSON.stringify(data.candidate_context || {}, null, 2);
       document.getElementById('scheduler-config-bot-config').value = JSON.stringify(data.config || {}, null, 2);
       document.getElementById('scheduler-group-id').value = data.group_id;
+      schedulerConfigSavedAtLabel = data.created_at || '已存在配置';
       updateStructuredSchedulerForm();
+      clearSchedulerFormDirty();
+      renderSchedulerConfigStatusCard('当前配置已从现有记录载入。');
       toggleSchedulerAdvancedMode(true);
       document.getElementById('scheduler-result').textContent = `已加载 ${data.group_id} 的配置`;
     }
