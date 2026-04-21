@@ -1023,7 +1023,10 @@ def _render_dashboard_html() -> str:
           </div>
         </div>
       </div>
-      <div class="row">
+      <div class="actions" style="margin:12px 0 0;">
+        <button class="secondary" id="scheduler-config-advanced-toggle">显示高级模式（JSON）</button>
+      </div>
+      <div class="row" id="scheduler-config-advanced-panel" style="display:none;">
         <div>
           <label>群组 ID</label>
           <input id="scheduler-config-group-id" />
@@ -1154,6 +1157,14 @@ def _render_dashboard_html() -> str:
     }
 
     updateStructuredSchedulerForm();
+
+    function toggleSchedulerAdvancedMode(forceOpen = null) {
+      const panel = document.getElementById('scheduler-config-advanced-panel');
+      const button = document.getElementById('scheduler-config-advanced-toggle');
+      const shouldOpen = forceOpen === null ? panel.style.display === 'none' : forceOpen;
+      panel.style.display = shouldOpen ? 'grid' : 'none';
+      button.textContent = shouldOpen ? '收起高级模式（JSON）' : '显示高级模式（JSON）';
+    }
 
     async function requestJson(url, options) {
       const response = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -1415,6 +1426,7 @@ def _render_dashboard_html() -> str:
       document.getElementById('scheduler-config-bot-config').value = JSON.stringify(data.config || {}, null, 2);
       document.getElementById('scheduler-group-id').value = data.group_id;
       updateStructuredSchedulerForm();
+      toggleSchedulerAdvancedMode(true);
       document.getElementById('scheduler-result').textContent = `已加载 ${data.group_id} 的配置`;
     }
 
@@ -1459,6 +1471,7 @@ def _render_dashboard_html() -> str:
     document.getElementById('scheduler-config-update').addEventListener('click', () => updateExistingSchedulerConfig().catch((error) => {
       document.getElementById('scheduler-result').textContent = String(error);
     }));
+    document.getElementById('scheduler-config-advanced-toggle').addEventListener('click', () => toggleSchedulerAdvancedMode());
     ['scheduler-form-group-name', 'scheduler-form-rules-summary', 'scheduler-form-provider', 'scheduler-form-bot-display-name', 'scheduler-form-bot-role', 'scheduler-form-scenario-id', 'scheduler-form-content-mode'].forEach((id) => {
       document.getElementById(id).addEventListener('input', () => {
         try { syncSchedulerJsonFromStructuredForm(); } catch (_) {}

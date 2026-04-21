@@ -40,6 +40,9 @@ def test_dashboard_html_contains_group_filter_sort_and_editor_load_hooks(tmp_pat
     assert 'id="scheduler-form-bot-role"' in html
     assert 'id="scheduler-form-scenario-id"' in html
     assert 'id="scheduler-form-content-mode"' in html
+    assert 'id="scheduler-config-advanced-toggle"' in html
+    assert 'id="scheduler-config-advanced-panel"' in html
+    assert 'toggleSchedulerAdvancedMode' in html
     assert 'syncSchedulerJsonFromStructuredForm' in html
     assert 'updateStructuredSchedulerForm' in html
     assert 'formatRoleLabel' in html
