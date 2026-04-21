@@ -3,6 +3,7 @@ database:
   execution_db_path: data/execution_attempts.db
   planner_audit_db_path: data/planner_audits.db
   runtime_ingest_db_path: data/runtime_ingest.db
+  scheduler_run_db_path: data/scheduler_runs.db
 
 execution:
   default_sender: mock # mock | dry_run | webhook

@@ -19,6 +19,7 @@ from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
 from whatsapp_bot_system.runtime_ingest_store_sqlite import RuntimeIngestRecord, SQLiteRuntimeIngestStore
 from whatsapp_bot_system.runtime_sources import load_runtime_input_from_file
+from whatsapp_bot_system.scheduler_run_store_sqlite import SchedulerRunRecord, SQLiteSchedulerRunStore
 from whatsapp_bot_system.templates import TemplateCatalog, render_candidate_from_template
 
 
@@ -76,6 +77,10 @@ class SchedulerExecuteLatestRequest(BaseModel):
     reviewer: str = 'ops-runner'
 
 
+class SchedulerExecuteMultiRequest(BaseModel):
+    items: list[SchedulerExecuteLatestRequest]
+
+
 class CreateCandidateRequest(BaseModel):
     bot_id: str
     bot_display_name: str
@@ -114,6 +119,7 @@ def create_app(
     execution_db_path: str | Path | None = None,
     planner_audit_db_path: str | Path | None = None,
     runtime_ingest_db_path: str | Path | None = None,
+    scheduler_run_db_path: str | Path | None = None,
     default_sender: str = 'mock',
     settings_templates: dict[str, Any] | None = None,
     webhook_endpoint: str = '',
@@ -124,11 +130,13 @@ def create_app(
     resolved_execution_db_path = ':memory:' if execution_db_path is None else Path(execution_db_path)
     resolved_planner_audit_db_path = ':memory:' if planner_audit_db_path is None else Path(planner_audit_db_path)
     resolved_runtime_ingest_db_path = ':memory:' if runtime_ingest_db_path is None else Path(runtime_ingest_db_path)
+    resolved_scheduler_run_db_path = ':memory:' if scheduler_run_db_path is None else Path(scheduler_run_db_path)
     resolved_templates = settings_templates or {'personas': {}, 'scenarios': {}}
     store = SQLiteCandidateMessageStore(resolved_db_path)
     attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
     planner_audit_store = SQLitePlannerAuditStore(resolved_planner_audit_db_path)
     runtime_ingest_store = SQLiteRuntimeIngestStore(resolved_runtime_ingest_db_path)
+    scheduler_run_store = SQLiteSchedulerRunStore(resolved_scheduler_run_db_path)
     review_service = ReviewFlowService(store)
     sender_registry = SenderRegistry(
         default_sender=default_sender,
@@ -159,6 +167,7 @@ def create_app(
             'execution_db_path': str(resolved_execution_db_path),
             'planner_audit_db_path': str(resolved_planner_audit_db_path),
             'runtime_ingest_db_path': str(resolved_runtime_ingest_db_path),
+            'scheduler_run_db_path': str(resolved_scheduler_run_db_path),
             'default_sender': default_sender,
             'available_senders': sorted(sender_registry.senders.keys()),
         }
@@ -187,7 +196,12 @@ def create_app(
             'recent_attempts': [_serialize_attempt(item) for item in attempts[:10]],
             'recent_planner_audits': [_serialize_planner_audit(item) for item in planner_audit_store.list(limit=10)],
             'recent_runtime_ingests': [_serialize_runtime_ingest(item) for item in runtime_ingest_store.list(limit=10)],
+            'recent_scheduler_runs': [_serialize_scheduler_run(item) for item in scheduler_run_store.list(limit=10)],
         }
+
+    @app.get('/v1/scheduler/runs')
+    def list_scheduler_runs() -> dict:
+        return {'items': [_serialize_scheduler_run(item) for item in scheduler_run_store.list()]}
 
     @app.post('/v1/runtime/ingest')
     def ingest_runtime(request: RuntimeIngestRequest) -> dict:
@@ -323,50 +337,23 @@ def create_app(
 
     @app.post('/v1/scheduler/execute-latest')
     def execute_scheduler_latest(request: SchedulerExecuteLatestRequest) -> dict:
-        try:
-            ingest = runtime_ingest_store.latest(request.group_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f'No runtime ingest found for group: {request.group_id}') from exc
-        execution, audit = _plan_candidate_execution(
-            PlannerExecuteRequest(
-                config=request.config,
-                runtime_input=ingest.runtime_input,
-                candidate_context=request.candidate_context,
-                submit_for_review=True,
-                workflow=request.workflow,
-                reviewer=request.reviewer,
-            )
-        )
-        planner_audit_store.save(audit)
-        if execution is None:
-            return {
-                'matched': False,
-                'candidate': None,
-                'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
-                'planner_audit': _serialize_planner_audit(audit),
-            }
-        plan, candidate = execution
-        record = review_service.create_candidate(
-            bot_id=plan.bot_id,
-            bot_display_name=candidate.bot_display_name,
-            scenario_id=plan.scenario_id,
-            content_mode=plan.content_mode,
-            text=candidate.text,
-            context=request.candidate_context,
-        )
-        record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=True, review_service=review_service, execution_service=execution_service)
+        result = _execute_scheduler_latest(request=request, runtime_ingest_store=runtime_ingest_store, planner_audit_store=planner_audit_store, review_service=review_service, execution_service=execution_service, scheduler_run_store=scheduler_run_store)
+        return result
+
+    @app.post('/v1/scheduler/execute-multi')
+    def execute_scheduler_multi(request: SchedulerExecuteMultiRequest) -> dict:
         return {
-            'matched': True,
-            'plan': {
-                'scenario_id': plan.scenario_id,
-                'bot_id': plan.bot_id,
-                'content_mode': plan.content_mode,
-                'trigger': plan.trigger,
-                'reason': plan.reason,
-            },
-            'candidate': _serialize_candidate(record),
-            'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
-            'planner_audit': _serialize_planner_audit(audit),
+            'items': [
+                _execute_scheduler_latest(
+                    request=item,
+                    runtime_ingest_store=runtime_ingest_store,
+                    planner_audit_store=planner_audit_store,
+                    review_service=review_service,
+                    execution_service=execution_service,
+                    scheduler_run_store=scheduler_run_store,
+                )
+                for item in request.items
+            ]
         }
 
     @app.post('/v1/templates/render')
@@ -523,6 +510,84 @@ def _apply_workflow(*, record_id: str, workflow: str, reviewer: str, submit_for_
     raise HTTPException(status_code=400, detail=f'Unsupported workflow: {workflow}')
 
 
+def _execute_scheduler_latest(*, request: SchedulerExecuteLatestRequest, runtime_ingest_store: SQLiteRuntimeIngestStore, planner_audit_store: SQLitePlannerAuditStore, review_service: ReviewFlowService, execution_service: SendExecutionService, scheduler_run_store: SQLiteSchedulerRunStore) -> dict:
+    try:
+        ingest = runtime_ingest_store.latest(request.group_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f'No runtime ingest found for group: {request.group_id}') from exc
+    execution, audit = _plan_candidate_execution(
+        PlannerExecuteRequest(
+            config=request.config,
+            runtime_input=ingest.runtime_input,
+            candidate_context=request.candidate_context,
+            submit_for_review=True,
+            workflow=request.workflow,
+            reviewer=request.reviewer,
+        )
+    )
+    planner_audit_store.save(audit)
+    scheduler_run_id = f'srun_{uuid4().hex[:12]}'
+    created_at = datetime.now(timezone.utc).isoformat()
+    if execution is None:
+        run = scheduler_run_store.save(
+            SchedulerRunRecord(
+                id=scheduler_run_id,
+                group_id=request.group_id,
+                status='no_match',
+                workflow=request.workflow,
+                runtime_ingest_id=ingest.id,
+                planner_audit_id=audit.id,
+                candidate_id=None,
+                created_at=created_at,
+            )
+        )
+        return {
+            'group_id': request.group_id,
+            'matched': False,
+            'candidate': None,
+            'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
+            'planner_audit': _serialize_planner_audit(audit),
+            'scheduler_run': _serialize_scheduler_run(run),
+        }
+    plan, candidate = execution
+    record = review_service.create_candidate(
+        bot_id=plan.bot_id,
+        bot_display_name=candidate.bot_display_name,
+        scenario_id=plan.scenario_id,
+        content_mode=plan.content_mode,
+        text=candidate.text,
+        context=request.candidate_context,
+    )
+    record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=True, review_service=review_service, execution_service=execution_service)
+    run = scheduler_run_store.save(
+        SchedulerRunRecord(
+            id=scheduler_run_id,
+            group_id=request.group_id,
+            status=record.status,
+            workflow=request.workflow,
+            runtime_ingest_id=ingest.id,
+            planner_audit_id=audit.id,
+            candidate_id=record.id,
+            created_at=created_at,
+        )
+    )
+    return {
+        'group_id': request.group_id,
+        'matched': True,
+        'plan': {
+            'scenario_id': plan.scenario_id,
+            'bot_id': plan.bot_id,
+            'content_mode': plan.content_mode,
+            'trigger': plan.trigger,
+            'reason': plan.reason,
+        },
+        'candidate': _serialize_candidate(record),
+        'runtime_source': {'type': 'ingest', 'ingest_id': ingest.id, 'group_id': ingest.group_id},
+        'planner_audit': _serialize_planner_audit(audit),
+        'scheduler_run': _serialize_scheduler_run(run),
+    }
+
+
 def _apply_transition(fn) -> dict:
     try:
         return _serialize_candidate(fn())
@@ -584,6 +649,19 @@ def _serialize_runtime_ingest(record) -> dict:
         'group_id': record.group_id,
         'runtime_input': record.runtime_input,
         'metadata': record.metadata,
+        'created_at': record.created_at,
+    }
+
+
+def _serialize_scheduler_run(record) -> dict:
+    return {
+        'id': record.id,
+        'group_id': record.group_id,
+        'status': record.status,
+        'workflow': record.workflow,
+        'runtime_ingest_id': record.runtime_ingest_id,
+        'planner_audit_id': record.planner_audit_id,
+        'candidate_id': record.candidate_id,
         'created_at': record.created_at,
     }
 
@@ -694,6 +772,8 @@ def _render_dashboard_html() -> str:
       </div>
       <h3>Recent Runtime Ingests</h3>
       <div id="runtime-ingests"></div>
+      <h3 style="margin-top:16px;">Recent Scheduler Runs</h3>
+      <div id="scheduler-runs"></div>
     </section>
   </div>
 
@@ -768,6 +848,15 @@ def _render_dashboard_html() -> str:
         </div>`).join('') : '<div class="muted">No runtime ingests yet.</div>';
     }
 
+    function renderSchedulerRuns(items) {
+      document.getElementById('scheduler-runs').innerHTML = items.length ? items.map((item) => `
+        <div class="item">
+          <div><span class="label">${item.status}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">workflow=${item.workflow}</div>
+          <div class="muted">candidate=${item.candidate_id || '-'} · audit=${item.planner_audit_id || '-'}</div>
+        </div>`).join('') : '<div class="muted">No scheduler runs yet.</div>';
+    }
+
     async function loadDashboard() {
       const data = await requestJson('/v1/dashboard/summary');
       document.getElementById('health').textContent = `Health: ${data.health.status} · default sender=${data.health.default_sender} · senders=${data.health.available_senders.join(', ')}`;
@@ -776,6 +865,7 @@ def _render_dashboard_html() -> str:
       renderAttempts(data.recent_attempts);
       renderPlannerAudits(data.recent_planner_audits || []);
       renderRuntimeIngests(data.recent_runtime_ingests || []);
+      renderSchedulerRuns(data.recent_scheduler_runs || []);
     }
 
     async function approveCandidate(id) {
