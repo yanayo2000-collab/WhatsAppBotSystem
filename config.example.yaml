@@ -1,6 +1,7 @@
 database:
   review_db_path: data/review_flow.db
   execution_db_path: data/execution_attempts.db
+  planner_audit_db_path: data/planner_audits.db
 
 execution:
   default_sender: mock # mock | dry_run | webhook

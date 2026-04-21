@@ -11,6 +11,7 @@ def create_app_from_settings(settings: AppSettings):
     return create_app(
         db_path=settings.database.review_db_path,
         execution_db_path=settings.database.execution_db_path,
+        planner_audit_db_path=settings.database.planner_audit_db_path,
         default_sender=settings.execution.default_sender,
         settings_templates=settings.templates,
         webhook_endpoint=settings.execution.webhook_sender.endpoint,

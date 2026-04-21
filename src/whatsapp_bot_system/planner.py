@@ -8,6 +8,7 @@ from whatsapp_bot_system.domain import (
     FrequencyPolicy,
     GroupRuntimeState,
     PlannedGroupAction,
+    PlannerDecision,
     ScenarioConfig,
     WhatsAppMultiBotConfig,
 )
@@ -33,26 +34,37 @@ def load_multi_bot_config(raw: dict[str, Any] | None) -> WhatsAppMultiBotConfig:
 
 
 def plan_group_action(config: WhatsAppMultiBotConfig, state: GroupRuntimeState) -> PlannedGroupAction | None:
+    return evaluate_group_action(config, state).action
+
+
+def evaluate_group_action(config: WhatsAppMultiBotConfig, state: GroupRuntimeState) -> PlannerDecision:
     if not config.enabled or not config.bots or not config.scenarios:
-        return None
+        return PlannerDecision(matched=False, action=None, decision_reason='planner_disabled')
     if config.group_id and config.group_id != state.group_id:
-        return None
+        return PlannerDecision(matched=False, action=None, decision_reason='group_id_mismatch')
+    if _group_cooldown_active(state, config.frequency):
+        return PlannerDecision(matched=False, action=None, decision_reason='group_cooldown_active')
 
     scenarios = sorted((s for s in config.scenarios if s.enabled), key=lambda s: s.priority, reverse=True)
+    matched_scenario = False
     for scenario in scenarios:
         if not _scenario_matches(scenario, state, config.frequency):
             continue
+        matched_scenario = True
         bot = _pick_bot(config, state, scenario)
         if bot is None:
             continue
-        return PlannedGroupAction(
+        action = PlannedGroupAction(
             scenario_id=scenario.id,
             bot_id=bot.id,
             content_mode=scenario.content_mode or (bot.content_modes[0] if bot.content_modes else 'template_rewrite'),
             trigger=scenario.trigger,
             reason=_build_reason(scenario.trigger, state),
         )
-    return None
+        return PlannerDecision(matched=True, action=action, decision_reason='scenario_matched')
+    if matched_scenario:
+        return PlannerDecision(matched=False, action=None, decision_reason='no_available_bot')
+    return PlannerDecision(matched=False, action=None, decision_reason='no_matching_scenario')
 
 
 def _parse_bot(raw: dict[str, Any]) -> BotConfig:
@@ -83,8 +95,6 @@ def _parse_scenario(raw: dict[str, Any]) -> ScenarioConfig:
 
 
 def _scenario_matches(scenario: ScenarioConfig, state: GroupRuntimeState, frequency: FrequencyPolicy) -> bool:
-    if _group_cooldown_active(state, frequency):
-        return False
     now = state.now
     if scenario.trigger == 'manual_review':
         return any(event.type == 'manual_review' for event in state.runtime_events)

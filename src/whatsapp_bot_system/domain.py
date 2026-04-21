@@ -74,3 +74,10 @@ class PlannedGroupAction:
     content_mode: str
     trigger: str
     reason: str
+
+
+@dataclass(frozen=True)
+class PlannerDecision:
+    matched: bool
+    action: PlannedGroupAction | None
+    decision_reason: str

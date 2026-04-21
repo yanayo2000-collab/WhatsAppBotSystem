@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -11,10 +12,12 @@ from pydantic import BaseModel, Field
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
 from whatsapp_bot_system.execution_store_sqlite import SQLiteExecutionAttemptStore
 from whatsapp_bot_system.executor import DryRunSender, MockSender, SendExecutionService, SenderRegistry, WebhookSender
-from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
+from whatsapp_bot_system.planner import evaluate_group_action, load_multi_bot_config
+from whatsapp_bot_system.planner_audit_store_sqlite import PlannerAuditRecord, SQLitePlannerAuditStore
 from whatsapp_bot_system.review_flow import ReviewFlowService
 from whatsapp_bot_system.review_store_sqlite import SQLiteCandidateMessageStore
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
+from whatsapp_bot_system.runtime_sources import load_runtime_input_from_file
 from whatsapp_bot_system.templates import TemplateCatalog, render_candidate_from_template
 
 
@@ -45,6 +48,14 @@ class PlannerDryRunRequest(BaseModel):
 
 class PlannerExecuteRequest(PlannerDryRunRequest):
     submit_for_review: bool = True
+    workflow: str = 'queue'
+    reviewer: str = 'ops-runner'
+
+
+class RunnerRuntimeFileExecuteRequest(BaseModel):
+    config: dict
+    runtime_file_path: str
+    candidate_context: dict[str, Any] = Field(default_factory=dict)
     workflow: str = 'queue'
     reviewer: str = 'ops-runner'
 
@@ -85,6 +96,7 @@ class SendCandidateRequest(BaseModel):
 def create_app(
     db_path: str | Path | None = None,
     execution_db_path: str | Path | None = None,
+    planner_audit_db_path: str | Path | None = None,
     default_sender: str = 'mock',
     settings_templates: dict[str, Any] | None = None,
     webhook_endpoint: str = '',
@@ -93,9 +105,11 @@ def create_app(
 ) -> FastAPI:
     resolved_db_path = ':memory:' if db_path is None else Path(db_path)
     resolved_execution_db_path = ':memory:' if execution_db_path is None else Path(execution_db_path)
+    resolved_planner_audit_db_path = ':memory:' if planner_audit_db_path is None else Path(planner_audit_db_path)
     resolved_templates = settings_templates or {'personas': {}, 'scenarios': {}}
     store = SQLiteCandidateMessageStore(resolved_db_path)
     attempt_store = SQLiteExecutionAttemptStore(resolved_execution_db_path)
+    planner_audit_store = SQLitePlannerAuditStore(resolved_planner_audit_db_path)
     review_service = ReviewFlowService(store)
     sender_registry = SenderRegistry(
         default_sender=default_sender,
@@ -150,13 +164,19 @@ def create_app(
             },
             'recent_candidates': [_serialize_candidate(item) for item in recent_candidates],
             'recent_attempts': [_serialize_attempt(item) for item in attempts[:10]],
+            'recent_planner_audits': [_serialize_planner_audit(item) for item in planner_audit_store.list(limit=10)],
         }
+
+    @app.get('/v1/planner/audits')
+    def list_planner_audits() -> dict:
+        return {'items': [_serialize_planner_audit(item) for item in planner_audit_store.list()]}
 
     @app.post('/v1/planner/dry-run')
     def planner_dry_run(request: PlannerDryRunRequest) -> dict:
-        execution = _plan_candidate_execution(request)
+        execution, audit = _plan_candidate_execution(request)
+        planner_audit_store.save(audit)
         if execution is None:
-            return {'matched': False, 'plan': None, 'candidate_message': None}
+            return {'matched': False, 'plan': None, 'candidate_message': None, 'planner_audit': _serialize_planner_audit(audit)}
 
         plan, candidate = execution
         return {
@@ -175,13 +195,15 @@ def create_app(
                 'text': candidate.text,
                 'metadata': candidate.metadata,
             },
+            'planner_audit': _serialize_planner_audit(audit),
         }
 
     @app.post('/v1/ops/planner/execute')
     def execute_planner(request: PlannerExecuteRequest) -> dict:
-        execution = _plan_candidate_execution(request)
+        execution, audit = _plan_candidate_execution(request)
+        planner_audit_store.save(audit)
         if execution is None:
-            return {'matched': False, 'plan': None, 'candidate': None}
+            return {'matched': False, 'plan': None, 'candidate': None, 'planner_audit': _serialize_planner_audit(audit)}
 
         plan, candidate = execution
         record = review_service.create_candidate(
@@ -192,17 +214,7 @@ def create_app(
             text=candidate.text,
             context=request.candidate_context,
         )
-        if request.submit_for_review:
-            record = review_service.submit_for_review(record.id)
-        if request.workflow == 'approve':
-            record = review_service.approve(record.id, reviewer=request.reviewer)
-        elif request.workflow == 'send':
-            if record.status != 'pending_review':
-                record = review_service.submit_for_review(record.id)
-            record = review_service.approve(record.id, reviewer=request.reviewer)
-            record = execution_service.send_candidate(record.id)
-        elif request.workflow != 'queue':
-            raise HTTPException(status_code=400, detail=f'Unsupported workflow: {request.workflow}')
+        record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=request.submit_for_review, review_service=review_service, execution_service=execution_service)
         return {
             'matched': True,
             'plan': {
@@ -213,6 +225,53 @@ def create_app(
                 'reason': plan.reason,
             },
             'candidate': _serialize_candidate(record),
+            'planner_audit': _serialize_planner_audit(audit),
+        }
+
+    @app.post('/v1/runner/runtime-file/execute')
+    def execute_runtime_file_runner(request: RunnerRuntimeFileExecuteRequest) -> dict:
+        runtime_input = load_runtime_input_from_file(request.runtime_file_path)
+        execution, audit = _plan_candidate_execution(
+            PlannerExecuteRequest(
+                config=request.config,
+                runtime_input=runtime_input,
+                candidate_context=request.candidate_context,
+                submit_for_review=True,
+                workflow=request.workflow,
+                reviewer=request.reviewer,
+            )
+        )
+        planner_audit_store.save(audit)
+        if execution is None:
+            return {
+                'matched': False,
+                'candidate': None,
+                'runtime_source': {'type': 'file', 'path': request.runtime_file_path},
+                'planner_audit': _serialize_planner_audit(audit),
+            }
+
+        plan, candidate = execution
+        record = review_service.create_candidate(
+            bot_id=plan.bot_id,
+            bot_display_name=candidate.bot_display_name,
+            scenario_id=plan.scenario_id,
+            content_mode=plan.content_mode,
+            text=candidate.text,
+            context=request.candidate_context,
+        )
+        record = _apply_workflow(record_id=record.id, workflow=request.workflow, reviewer=request.reviewer, submit_for_review=True, review_service=review_service, execution_service=execution_service)
+        return {
+            'matched': True,
+            'plan': {
+                'scenario_id': plan.scenario_id,
+                'bot_id': plan.bot_id,
+                'content_mode': plan.content_mode,
+                'trigger': plan.trigger,
+                'reason': plan.reason,
+            },
+            'candidate': _serialize_candidate(record),
+            'runtime_source': {'type': 'file', 'path': request.runtime_file_path},
+            'planner_audit': _serialize_planner_audit(audit),
         }
 
     @app.post('/v1/templates/render')
@@ -291,7 +350,11 @@ def create_app(
     return app
 
 
-app = create_app(db_path=Path('data/review_flow.db'), execution_db_path=Path('data/execution_attempts.db'))
+app = create_app(
+    db_path=Path('data/review_flow.db'),
+    execution_db_path=Path('data/execution_attempts.db'),
+    planner_audit_db_path=Path('data/planner_audits.db'),
+)
 
 
 def _build_state_from_request(request: PlannerDryRunRequest) -> GroupRuntimeState:
@@ -322,9 +385,20 @@ def _resolve_bot_name(config: dict[str, Any], bot_id: str) -> str:
 def _plan_candidate_execution(request: PlannerDryRunRequest):
     config = load_multi_bot_config(request.config)
     state = _build_state_from_request(request)
-    plan = plan_group_action(config, state)
-    if plan is None:
-        return None
+    decision = evaluate_group_action(config, state)
+    audit = PlannerAuditRecord(
+        id=f'audit_{uuid4().hex[:12]}',
+        group_id=state.group_id,
+        matched=decision.matched,
+        scenario_id=None if decision.action is None else decision.action.scenario_id,
+        bot_id=None if decision.action is None else decision.action.bot_id,
+        trigger=None if decision.action is None else decision.action.trigger,
+        decision_reason=decision.decision_reason,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    if decision.action is None:
+        return None, audit
+    plan = decision.action
     bot_name = _resolve_bot_name(request.config, plan.bot_id)
     candidate = create_candidate_message(
         scenario_id=plan.scenario_id,
@@ -332,7 +406,26 @@ def _plan_candidate_execution(request: PlannerDryRunRequest):
         content_mode=plan.content_mode,
         context=request.candidate_context,
     )
-    return plan, candidate
+    return (plan, candidate), audit
+
+
+def _apply_workflow(*, record_id: str, workflow: str, reviewer: str, submit_for_review: bool, review_service: ReviewFlowService, execution_service: SendExecutionService):
+    record = review_service.get_candidate(record_id)
+    if submit_for_review and record.status == 'generated':
+        record = review_service.submit_for_review(record.id)
+    if workflow == 'queue':
+        return record
+    if workflow == 'approve':
+        if record.status == 'generated':
+            record = review_service.submit_for_review(record.id)
+        return review_service.approve(record.id, reviewer=reviewer)
+    if workflow == 'send':
+        if record.status == 'generated':
+            record = review_service.submit_for_review(record.id)
+        if record.status == 'pending_review':
+            record = review_service.approve(record.id, reviewer=reviewer)
+        return execution_service.send_candidate(record.id)
+    raise HTTPException(status_code=400, detail=f'Unsupported workflow: {workflow}')
 
 
 def _apply_transition(fn) -> dict:
@@ -372,6 +465,19 @@ def _serialize_attempt(record) -> dict:
         'status': record.status,
         'outbound_message_id': record.outbound_message_id,
         'error_message': record.error_message,
+        'created_at': record.created_at,
+    }
+
+
+def _serialize_planner_audit(record) -> dict:
+    return {
+        'id': record.id,
+        'group_id': record.group_id,
+        'matched': record.matched,
+        'scenario_id': record.scenario_id,
+        'bot_id': record.bot_id,
+        'trigger': record.trigger,
+        'decision_reason': record.decision_reason,
         'created_at': record.created_at,
     }
 
@@ -455,6 +561,11 @@ def _render_dashboard_html() -> str:
         <div id="attempts"></div>
       </section>
     </div>
+
+    <section class="panel">
+      <h2>Recent Planner Audits</h2>
+      <div id="planner-audits"></div>
+    </section>
   </div>
 
   <script>
@@ -507,12 +618,22 @@ def _render_dashboard_html() -> str:
         </div>`).join('') : '<div class="muted">No attempts yet.</div>';
     }
 
+    function renderPlannerAudits(items) {
+      document.getElementById('planner-audits').innerHTML = items.length ? items.map((item) => `
+        <div class="item">
+          <div><span class="label">${item.matched ? 'matched' : 'blocked'}</span> ${item.group_id}</div>
+          <div class="muted" style="margin-top:8px;">decision=${item.decision_reason}</div>
+          <div class="muted">scenario=${item.scenario_id || '-'} · bot=${item.bot_id || '-'}</div>
+        </div>`).join('') : '<div class="muted">No planner audits yet.</div>';
+    }
+
     async function loadDashboard() {
       const data = await requestJson('/v1/dashboard/summary');
       document.getElementById('health').textContent = `Health: ${data.health.status} · default sender=${data.health.default_sender} · senders=${data.health.available_senders.join(', ')}`;
       renderQueue(data.queue);
       renderCandidates(data.recent_candidates);
       renderAttempts(data.recent_attempts);
+      renderPlannerAudits(data.recent_planner_audits || []);
     }
 
     async function approveCandidate(id) {
