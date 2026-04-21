@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from whatsapp_bot_system.domain import GroupRuntimeState, RuntimeEvent
 from whatsapp_bot_system.planner import load_multi_bot_config, plan_group_action
+from whatsapp_bot_system.review_flow import CandidateMessageStore, ReviewFlowService
 from whatsapp_bot_system.runtime import build_runtime_state, create_candidate_message
 
 
@@ -34,6 +35,32 @@ class PlannerDryRunRequest(BaseModel):
     state: GroupRuntimeStatePayload | None = None
     runtime_input: dict[str, Any] | None = None
     candidate_context: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateCandidateRequest(BaseModel):
+    bot_id: str
+    bot_display_name: str
+    scenario_id: str
+    content_mode: str
+    text: str
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReviewDecisionRequest(BaseModel):
+    reviewer: str
+    reason: str | None = None
+
+
+class MarkSentRequest(BaseModel):
+    outbound_message_id: str
+
+
+class MarkFailedRequest(BaseModel):
+    error: str
+
+
+_store = CandidateMessageStore()
+_review_service = ReviewFlowService(_store)
 
 
 def create_app() -> FastAPI:
@@ -75,6 +102,52 @@ def create_app() -> FastAPI:
             },
         }
 
+    @app.post('/v1/review/candidates')
+    def create_candidate(request: CreateCandidateRequest) -> dict:
+        record = _review_service.create_candidate(
+            bot_id=request.bot_id,
+            bot_display_name=request.bot_display_name,
+            scenario_id=request.scenario_id,
+            content_mode=request.content_mode,
+            text=request.text,
+            context=request.context,
+        )
+        return _serialize_candidate(record)
+
+    @app.get('/v1/review/candidates')
+    def list_candidates(status: str | None = None) -> dict:
+        try:
+            items = _review_service.list_candidates(status=status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {'items': [_serialize_candidate(item) for item in items]}
+
+    @app.post('/v1/review/candidates/{candidate_id}/submit')
+    def submit_candidate(candidate_id: str) -> dict:
+        return _apply_transition(lambda: _review_service.submit_for_review(candidate_id))
+
+    @app.post('/v1/review/candidates/{candidate_id}/approve')
+    def approve_candidate(candidate_id: str, request: ReviewDecisionRequest) -> dict:
+        return _apply_transition(lambda: _review_service.approve(candidate_id, reviewer=request.reviewer))
+
+    @app.post('/v1/review/candidates/{candidate_id}/reject')
+    def reject_candidate(candidate_id: str, request: ReviewDecisionRequest) -> dict:
+        return _apply_transition(
+            lambda: _review_service.reject(
+                candidate_id,
+                reviewer=request.reviewer,
+                reason=request.reason or 'rejected',
+            )
+        )
+
+    @app.post('/v1/review/candidates/{candidate_id}/sent')
+    def mark_candidate_sent(candidate_id: str, request: MarkSentRequest) -> dict:
+        return _apply_transition(lambda: _review_service.mark_sent(candidate_id, outbound_message_id=request.outbound_message_id))
+
+    @app.post('/v1/review/candidates/{candidate_id}/failed')
+    def mark_candidate_failed(candidate_id: str, request: MarkFailedRequest) -> dict:
+        return _apply_transition(lambda: _review_service.mark_failed(candidate_id, error=request.error))
+
     return app
 
 
@@ -104,3 +177,32 @@ def _resolve_bot_name(config: dict[str, Any], bot_id: str) -> str:
         if isinstance(item, dict) and item.get('id') == bot_id:
             return str(item.get('display_name') or bot_id)
     return bot_id
+
+
+def _apply_transition(fn) -> dict:
+    try:
+        return _serialize_candidate(fn())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f'Candidate not found: {exc.args[0]}') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _serialize_candidate(record) -> dict:
+    return {
+        'id': record.id,
+        'bot_id': record.bot_id,
+        'bot_display_name': record.bot_display_name,
+        'scenario_id': record.scenario_id,
+        'content_mode': record.content_mode,
+        'text': record.text,
+        'context': record.context,
+        'status': record.status,
+        'version': record.version,
+        'created_at': record.created_at.isoformat(),
+        'updated_at': record.updated_at.isoformat(),
+        'reviewed_by': record.reviewed_by,
+        'review_reason': record.review_reason,
+        'outbound_message_id': record.outbound_message_id,
+        'error_message': record.error_message,
+    }
